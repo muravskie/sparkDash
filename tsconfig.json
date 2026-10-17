@@ -12,6 +12,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": true,
     // Allow `import Foo from "./Foo.tsx"` (IDE-default style). Requires noEmit
     // (already set) — the bundler (Vite) still strips extensions at build time.
     "allowImportingTsExtensions": true,

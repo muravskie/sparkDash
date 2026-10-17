@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ToolEvalSpec } from "../../../api/types";
 import { compareGeneric, compareToolResults, configCaveats } from "./compare";
 import { estimateRemaining, explainErrorCode, fmtDuration, scoreTier, toolNotes } from "./format";
-import { collectTables, normalizeToolResult, suggestCharts, topMetrics } from "./normalize";
+import { RESPONSIVENESS_CURVE, collectTables, formatMedianTurn, normalizeToolResult, suggestCharts, topMetrics } from "./normalize";
 import { advancedFields, applyPreset, buildRequest, emptyState, groupFields, mapServerErrors, persistable, presetsFor, stateFromRun, typeConfig, validateState } from "./options";
 
 const arg = (name: string, kind: string, group: string, extra: object = {}) => ({ name, flag: `--${name}`, kind, group, label: name[0].toUpperCase() + name.slice(1), help: "", ...extra });
@@ -131,6 +131,21 @@ describe("normalize + compare", () => {
     expect(m.categories[0].percent).toBe(80);
     expect(m.scenarios[0].status).toBe("pass");
     expect(normalizeToolResult("nope")).toBeNull();
+    expect(n.medianTurnMs).toBeNull();
+  });
+  it("keeps median turn time when the CLI JSON has it", () => {
+    const n = normalizeToolResult({ median_turn_ms: 3000, responsiveness: 50, scores: {} })!;
+    expect(n.medianTurnMs).toBe(3000);
+    expect(n.responsiveness).toBe(50);
+    const nested = normalizeToolResult({ scores: { median_turn_ms: 1000, responsiveness: 84 } })!;
+    expect(nested.medianTurnMs).toBe(1000);
+    expect(formatMedianTurn(1000)).toBe("1.0s");
+    expect(formatMedianTurn(5000)).toBe("5.0s");
+    expect(formatMedianTurn(840)).toBe("840ms");
+    expect(RESPONSIVENESS_CURVE).toContain("median_turn_ms / 3000");
+    expect(RESPONSIVENESS_CURVE).toContain("84");
+    expect(RESPONSIVENESS_CURVE).toContain("50");
+    expect(RESPONSIVENESS_CURVE).toContain("32");
   });
   it("diffs scenarios and categories", () => {
     const a = normalizeToolResult(toolResult({ "TC-01": "pass", "TC-02": "fail", "TC-03": "pass" }, 60))!;

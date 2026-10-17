@@ -41,7 +41,7 @@ import {
 } from "./collectors/QualityBench.js";
 import { showcaseManager } from "./collectors/ShowcaseManager.js";
 import { llmProbeHost } from "./collectors/llmHost.js";
-import { onceClose, resolveLlmHttpTarget } from "./collectors/llmTunnel.js";
+import { onceClose, openSshLlmTunnel, resolveLlmHttpTarget } from "./collectors/llmTunnel.js";
 import { formatLlmBaseUrl, parseLlmTargetInput } from "../src/shared/llmTarget.js";
 import { llmDaily } from "./collectors/LlmDaily.js";
 import {
@@ -60,6 +60,11 @@ import { LauncherManager } from "./llmlaunch/LauncherManager.js";
 import { ToolEvalStore } from "./tooleval/ToolEvalStore.js";
 import { ToolEvalManager } from "./tooleval/ToolEvalManager.js";
 import { registerToolEvalRoutes } from "./tooleval/routes.js";
+import { registerPlaygroundRoutes } from "./playground/relay.js";
+import { createControllerClient } from "./models/client.js";
+import { loadControllerKey } from "./models/key.js";
+import { blockScriptLaunch, registerModelRoutes } from "./models/routes.js";
+import { registerAgentRoutes } from "./agent/routes.js";
 import { benchEvent } from "./events/eventFormat.js";
 import {
   createFleetEnergyRuntime,
@@ -462,6 +467,8 @@ const llmTokenRuntime = createLlmTokenRuntime({ ledger: llmTokenLedger, orderedS
 const app = express();
 const server = createServer(app);
 
+// The copied playground posts a full conversation. Other routes keep the default limit.
+app.use("/api/sparks/:id/playground/stream", express.json({ limit: "8mb" }));
 app.use(express.json());
 // Registered ahead of the auth middleware: a remote browser holding no token
 // (or a stale one) must still be able to learn that it needs one.
@@ -800,6 +807,30 @@ registerToolEvalRoutes(app, {
   rejectLimited,
 });
 
+registerPlaygroundRoutes(app, {
+  registry,
+  monitors,
+  benchHttpTarget,
+});
+
+const modelCache = new Map();
+const modelClient = createControllerClient({ key: () => loadControllerKey(), sshExec });
+registerModelRoutes(app, {
+  registry,
+  monitors,
+  client: modelClient,
+  cache: modelCache,
+  readKey: () => loadControllerKey(),
+  sshExec,
+  launchers: launcherStore,
+});
+
+const agentProxy = registerAgentRoutes(app, {
+  registry,
+  monitors,
+  openTunnel: openSshLlmTunnel,
+});
+
 // ─── LLM launchers: register a directory with start.sh / stop.sh and run it ───
 // The API only ever executes the registered start/stop script names inside the
 // registered directory (see llmlaunch/validate.js); it never runs a free-form command.
@@ -883,7 +914,7 @@ app.get("/api/sparks/:id/llm-launchers/jobs/:jobId", (req, res) => {
 });
 
 for (const action of ["start", "stop", "attach"]) {
-  app.post(`/api/sparks/:id/llm-launchers/:lid/${action}`, (req, res) => {
+  app.post(`/api/sparks/:id/llm-launchers/:lid/${action}`, async (req, res) => {
     const spark = launcherContext(req, res);
     if (!spark) return;
     const launcher = launcherStore.get(spark.id, req.params.lid);
@@ -891,6 +922,14 @@ for (const action of ["start", "stop", "attach"]) {
     const limiter = action === "attach" ? allowLaunchProbe : allowLaunch;
     if (!limiter(principalKey(req))) {
       return rejectLimited(res, "Too many start/stop requests; try again shortly");
+    }
+    if (action !== "attach") {
+      try {
+        const reason = await blockScriptLaunch(modelClient, modelCache, spark, launcher, launcherStore.list(spark.id));
+        if (reason) return res.status(409).json({ error: reason });
+      } catch {
+        // No controller reading: the script launcher stays available.
+      }
     }
     const result = launcherManager.startJob(spark, launcher, action);
     if (!result.ok) {
@@ -1336,8 +1375,9 @@ app.get("/api/sparks/:id/llm/daily", (req, res) => {
 /**
  * Decode throughput benchmark (streaming, post-first-token tok/s).
  *
- * POST body: { port?, concurrencies: number[], maxTokens?, promptType? }
- * promptType is structured | prose | code | json (default structured).
+ * POST body: { port?, concurrencies: number[], maxTokens?, promptTypes?, promptType? }
+ * promptTypes is structured | prose | code | json (one job walks them in catalog order).
+ * promptType alone is the older single-type request.
  * Returns immediately with a bench job; poll GET for progress/results.
  */
 app.post("/api/sparks/:id/llm/bench", async (req, res) => {
@@ -1375,7 +1415,17 @@ app.post("/api/sparks/:id/llm/bench", async (req, res) => {
   }
   const port = target.port;
   try {
-    validateDecodeBudget(normalizeConcurrencies(req.body?.concurrencies), req.body?.maxTokens ?? 400);
+    const decodeTypes = Array.isArray(req.body?.promptTypes)
+      ? req.body.promptTypes.filter((t) =>
+          ["structured", "prose", "code", "json"].includes(String(t || "").trim().toLowerCase())
+        )
+      : [];
+    const typeCount = new Set(decodeTypes.map((t) => String(t).trim().toLowerCase())).size || 1;
+    const decodeConc = normalizeConcurrencies(req.body?.concurrencies);
+    validateDecodeBudget(
+      typeCount === 1 ? decodeConc : decodeConc.flatMap((n) => Array(typeCount).fill(n)),
+      req.body?.maxTokens ?? 400
+    );
   } catch (err) {
     return res.status(err.status || 429).json({ error: err.message });
   }
@@ -1403,6 +1453,7 @@ app.post("/api/sparks/:id/llm/bench", async (req, res) => {
       modelId,
       concurrencies: req.body?.concurrencies,
       maxTokens: req.body?.maxTokens,
+      promptTypes: req.body?.promptTypes,
       promptType: req.body?.promptType,
       debug: benchDebug,
       apiKey: target.apiKey,
@@ -1743,7 +1794,8 @@ app.get("/api/sparks/:id/llm/quality-bench", (req, res) => {
   res.json({
     active: qualityBenchManager.getActive(spark.id),
     last: qualityBenchManager.getLast(spark.id, p),
-    history: qualityBenchManager.getHistorySummaries(spark.id, p),
+    // Every stored run for this Spark. The page filters to the next-run port itself.
+    history: qualityBenchManager.getHistorySummaries(spark.id),
     defaults: QUALITY_BENCH_DEFAULTS,
   });
 });
@@ -2188,11 +2240,18 @@ process.on("uncaughtException", (err) => {
 
 // ─── WebSocket ──────────────────────────────────────────
 const wss = new WebSocketServer({
-  server,
-  path: "/ws",
+  noServer: true,
   // The dashboard only ever receives; clients send nothing meaningful.
   maxPayload: 64 * 1024,
   verifyClient: ({ req }, done) => done(authorizeUpgrade(req)),
+});
+server.on("upgrade", (req, socket, head) => {
+  const pathname = (req.url || "/").split("?")[0];
+  if (pathname === "/ws") {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+    return;
+  }
+  socket.destroy();
 });
 wss.on("error", (err) => {
   console.error("[ws] server error:", err?.message);
@@ -2302,6 +2361,10 @@ if (!startupPreflight.fatal) {
     learnTailscaleName();
     setInterval(learnTailscaleName, 10 * 60 * 1000).unref();
   }
+  const agentPort = Number.parseInt(process.env.AGENT_PORT || "8093", 10);
+  agentProxy.listen(BIND_HOST, Number.isInteger(agentPort) && agentPort > 0 ? agentPort : 8093).catch((err) => {
+    console.error(`[sparkDash] OpenCode embed failed to listen: ${err instanceof Error ? err.message : err}`);
+  });
   server.listen(PORT, BIND_HOST, () => {
     console.log(`[sparkDash] server listening on http://${BIND_HOST}:${PORT}`);
     console.log(`[sparkDash] WebSocket endpoint ws://${BIND_HOST}:${PORT}/ws`);
@@ -2360,6 +2423,11 @@ async function shutdown(signal) {
     llmDaily.flush();
   } catch (err) {
     console.error("[sparkDash] failed to flush LLM daily history:", err.message);
+  }
+  try {
+    agentProxy.close();
+  } catch (err) {
+    console.error("[sparkDash] failed to close the OpenCode proxy:", err.message);
   }
   llmTokenRuntime.stop();
   const energyPersistenceSucceeded = fleetEnergyRuntime.stop();

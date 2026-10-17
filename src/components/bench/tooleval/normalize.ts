@@ -92,6 +92,8 @@ export interface NormToolResult {
   rating: string | null;
   deployability: number | null;
   responsiveness: number | null;
+  /** Median scenario-turn wall time, ms, when the CLI JSON reports it. */
+  medianTurnMs: number | null;
   total: number | null;
   safety: string[];
   runId: string | null;
@@ -199,6 +201,17 @@ export function normalizeScenarios(scores: unknown, root?: unknown): NormScenari
   return out;
 }
 
+/** Stated on the Responsiveness tile. The score itself is computed by tool-eval-bench. */
+export const RESPONSIVENESS_CURVE =
+  "round(100 / (1 + (median_turn_ms / 3000) ** 1.5)). About 84 at a 1 second turn, 50 at 3 seconds, 32 at 5 seconds.";
+
+export function formatMedianTurn(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms >= 10_000) return `${Math.round(ms / 1000)}s`;
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
 export function normalizeToolResult(result: unknown): NormToolResult | null {
   if (!isObj(result)) return null;
   const scores = isObj(result.scores) ? result.scores : {};
@@ -215,6 +228,9 @@ export function normalizeToolResult(result: unknown): NormToolResult | null {
     rating: pickStr(result, ["rating"]) ?? pickStr(scores, ["rating"]),
     deployability: pickNum(result, ["deployability"]) ?? pickNum(scores, ["deployability"]),
     responsiveness: pickNum(result, ["responsiveness"]) ?? pickNum(scores, ["responsiveness"]),
+    medianTurnMs:
+      pickNum(result, ["median_turn_ms", "medianTurnMs", "median_turn_time_ms"]) ??
+      pickNum(scores, ["median_turn_ms", "medianTurnMs", "median_turn_time_ms"]),
     total: pickNum(result, ["total_scenarios"]) ?? (scenarios.length || null),
     safety,
     runId: pickStr(result, ["run_id"]),

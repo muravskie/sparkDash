@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DecodeBenchJob, PrefillBenchJob, QualityBenchJob } from "../../../api/types";
-import { decodeHistoryRow, prefillHistoryRow, qualityHistoryRow } from "./historyRows";
+import { decodeHistoryRow, filterHistoryByPort, prefillHistoryRow, qualityHistoryRow } from "./historyRows";
 
 const level = (concurrency: number, agg: number, mean: number) =>
   ({
@@ -26,6 +26,25 @@ describe("history rows", () => {
     expect(row.detail).toBe("peak at ×4 · 30.0/stream at ×1");
     expect(row.label).toBe("×1, 4");
     expect(row.model).toBe("qwen");
+  });
+
+  it("lists prompt types on the decode history label, including a single older promptType", () => {
+    const multi = decodeHistoryRow({
+      benchId: "d3",
+      startedAt: 1,
+      status: "completed",
+      config: { concurrencies: [1, 2], modelId: "qwen", promptTypes: ["code", "prose"], promptType: "prose" },
+      results: [level(1, 30, 30)],
+    } as unknown as DecodeBenchJob);
+    expect(multi.label).toBe("Prose, Code · ×1, 2");
+    const legacy = decodeHistoryRow({
+      benchId: "d4",
+      startedAt: 1,
+      status: "completed",
+      config: { concurrencies: [1], modelId: "qwen", promptType: "json" },
+      results: [level(1, 10, 10)],
+    } as unknown as DecodeBenchJob);
+    expect(legacy.label).toBe("JSON · ×1");
   });
 
   it("decode shows a dash when nothing decoded", () => {
@@ -67,5 +86,24 @@ describe("history rows", () => {
     expect(row.headline).toBe("71.2%");
     expect(row.label).toBe("fp4 KV");
     expect(row.detail).toBe("2 categories");
+    expect(row.port).toBeNull();
+  });
+
+  it("keeps the port on a quality row and can narrow to one port", () => {
+    const job = {
+      benchId: "q2",
+      startedAt: 1,
+      status: "completed",
+      config: { label: "port", modelId: "m", port: 8001 },
+      results: { overallPct: 1, categories: {} },
+    } as unknown as QualityBenchJob;
+    expect(qualityHistoryRow(job).port).toBe(8001);
+    const rows = [
+      { config: { port: 8000 } },
+      { config: { port: 8001 } },
+      { config: { port: 8001 } },
+    ];
+    expect(filterHistoryByPort(rows, "all", 8000)).toHaveLength(3);
+    expect(filterHistoryByPort(rows, "port", 8001)).toHaveLength(2);
   });
 });

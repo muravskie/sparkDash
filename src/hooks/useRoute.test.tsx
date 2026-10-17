@@ -27,6 +27,7 @@ describe("useRoute", () => {
     expect(window.location.pathname).toBe("/spark/alpha");
     expect(window.history.length).toBe(before + 1);
     expect(setActive).toHaveBeenCalledWith("alpha");
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
   });
 
   it("replace rewrites the URL in place", () => {

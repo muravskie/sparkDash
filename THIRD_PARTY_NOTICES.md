@@ -9,6 +9,9 @@ It includes or depends on the following third-party work. Each keeps its own lic
 |---|---|---|---|
 | [react](https://www.npmjs.com/package/react) | 19.2.7 | MIT | Copyright (c) Meta Platforms, Inc. and affiliates. |
 | [react-dom](https://www.npmjs.com/package/react-dom) | 19.2.7 | MIT | Copyright (c) Meta Platforms, Inc. and affiliates. |
+| [lit](https://www.npmjs.com/package/lit) | 3.3.3 | BSD-3-Clause | Copyright (c) 2017 Google LLC. |
+| [markdown-it](https://www.npmjs.com/package/markdown-it) | 15.0.3 | MIT | Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin. |
+| [dompurify](https://www.npmjs.com/package/dompurify) | 3.4.17 | MPL-2.0 OR Apache-2.0 | Copyright (c) 2015 Mario Heiderich, Cure53. |
 | [@dnd-kit/core](https://www.npmjs.com/package/@dnd-kit/core) | 6.3.1 | MIT | Copyright (c) 2021, Claudéric Demers |
 | [@dnd-kit/sortable](https://www.npmjs.com/package/@dnd-kit/sortable) | 10.0.0 | MIT | Copyright (c) 2021, Claudéric Demers |
 | [@dnd-kit/utilities](https://www.npmjs.com/package/@dnd-kit/utilities) | 3.2.2 | MIT | Copyright (c) 2021, Claudéric Demers |
@@ -137,3 +140,4 @@ The lightning-bolt shape used in the sparkDash logo and favicon follows the "zap
 - [Hermes Agent](https://github.com/nousresearch/hermes-agent) by Nous Research is monitored and updated over SSH when you enable it.
 - The Instruction following category is inspired by IFEval (Zhou et al., Google). No IFEval code or data is included.
 - The health findings (thermal, low power, Xid, memory, link speed) were inspired by [spark-doctor](https://github.com/joeynyc/spark-doctor) by joeynyc (MIT). No code from it is included.
+- The OpenCode proxy in `server/agent/` adapts header hygiene, Basic authentication, and health-check reading from the Cockpit agent relay (MIT, Copyright (c) 2026 hasso5703). The Node implementation is new. The Python relay is not included.

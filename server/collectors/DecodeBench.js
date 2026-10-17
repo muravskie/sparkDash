@@ -2,7 +2,8 @@
  * DecodeBench — concurrent streaming decode throughput benchmark.
  *
  * Measures real post-first-token decode tok/s against an OpenAI-compatible
- * chat completions endpoint. Concurrency levels run one after another.
+ * chat completions endpoint. One job walks the selected prompt types in catalog
+ * order, and for each type the selected concurrency levels, one wave at a time.
  *
  * Output types (structured / prose / code / json) are prompt labels only —
  * never response_format, grammars, or guided JSON.
@@ -30,7 +31,9 @@ import {
 import {
   pickDecodeBenchPrompts,
   decodeBenchPromptForType,
+  decodeBenchTypeLabel,
   normalizeDecodeBenchType,
+  normalizePromptTypes,
   DECODE_BENCH_DEFAULT_TYPE,
   DECODE_BENCH_TYPES,
   DECODE_CODE_WARMUP_PROMPT,
@@ -55,7 +58,7 @@ const MAX_MAX_TOKENS = 2048;
 const WARMUP_MAX_TOKENS = 32;
 const PER_REQUEST_TIMEOUT_MS = 360_000;
 const WAVE_TIMEOUT_MS = 360_000;
-const HISTORY_LIMIT = 10;
+const HISTORY_LIMIT = 30;
 /** Hardware sample cadence while a concurrency wave runs (debug timeline). */
 const HARDWARE_SAMPLE_MS = 1_000;
 /** Cap samples per wave so history stays bounded (~2 min). */
@@ -201,6 +204,9 @@ function streamPublicResult(r, index, prompt, reqMeta, debug = false) {
     ttftContentMs: r?.ttftContentMs ?? null,
     reasoningChunks: r?.reasoningChunks ?? 0,
     ttftMs: r?.ttftMs ?? 0,
+    /** Monotonic timestamps from the wave clock, so a row can show start and end. */
+    tFirst: r?.tFirst ?? null,
+    tLast: r?.tLast ?? null,
     decodeTps: r?.decodeTps ?? 0,
     decodeTokens: r?.decodeTokens ?? 0,
     completionTokens: r?.completionTokens ?? 0,
@@ -752,6 +758,7 @@ export class DecodeBenchManager {
    *   modelId: string | null,
    *   concurrencies: number[],
    *   maxTokens?: number,
+   *   promptTypes?: string[],
    *   promptType?: string,
    *   debug?: boolean,
    *   sampleHardware?: (() => Promise<object | null> | object | null) | null,
@@ -771,6 +778,7 @@ export class DecodeBenchManager {
       modelId,
       concurrencies: rawConc,
       maxTokens: rawMax,
+      promptTypes: rawTypes,
       promptType: rawType,
       debug = false,
       sampleHardware = null,
@@ -810,7 +818,16 @@ export class DecodeBenchManager {
       throw err;
     }
 
-    const promptType = normalizeDecodeBenchType(rawType);
+    // An explicit list is the selection. Absent list keeps the single promptType
+    // (older clients and saved jobs). Unknown names are dropped, catalog order.
+    const promptTypes = Array.isArray(rawTypes)
+      ? normalizePromptTypes(rawTypes)
+      : [normalizeDecodeBenchType(rawType)];
+    if (!promptTypes.length) {
+      const err = new Error("Select at least one prompt type (structured, prose, code, or json)");
+      err.status = 400;
+      throw err;
+    }
     const debugOn = Boolean(debug);
     const benchId = randomUUID();
     const abort = new AbortController();
@@ -825,7 +842,9 @@ export class DecodeBenchManager {
         modelId: modelId || null,
         concurrencies,
         maxTokens,
-        promptType,
+        promptTypes,
+        /** First type, so readers that only know promptType still see one. */
+        promptType: promptTypes[0],
         ...(debugOn ? { debug: true } : {}),
         ...(rawHost
           ? { host: String(rawHost).trim(), tls: Boolean(rawTls) }
@@ -833,8 +852,9 @@ export class DecodeBenchManager {
       },
       progress: {
         currentConcurrency: null,
+        currentPromptType: null,
         completedLevels: 0,
-        totalLevels: concurrencies.length,
+        totalLevels: concurrencies.length * promptTypes.length,
         message: "Starting…",
       },
       results: [],
@@ -896,9 +916,25 @@ export class DecodeBenchManager {
         }
       }
       const baseUrl = formatLlmBaseUrl({ host, port, tls });
-      if (!job._abort.signal.aborted) {
+      const promptTypes =
+        Array.isArray(job.config.promptTypes) && job.config.promptTypes.length
+          ? job.config.promptTypes
+          : [job.config.promptType || DECODE_BENCH_DEFAULT_TYPE];
+      let stop = false;
+      for (const promptType of promptTypes) {
+        if (stop) break;
+        if (job._abort.signal.aborted) {
+          if (job.status === "running") {
+            job.status = "cancelled";
+            job.error = "Cancelled by user";
+            job.progress.message = "Cancelled";
+          }
+          break;
+        }
+        job.progress.currentPromptType = promptType;
+        const typeLabel = decodeBenchTypeLabel(promptType);
         if (!String(job.progress.message || "").startsWith("Warming up")) {
-          job.progress.message = "Warming up…";
+          job.progress.message = `Warming up ${typeLabel}…`;
         }
         this._checkpointActive();
         await warmupDecode({
@@ -907,64 +943,69 @@ export class DecodeBenchManager {
           abortSignal: job._abort.signal,
           apiKey: job._apiKey,
           debug,
-          promptType: job.config.promptType,
+          promptType,
         });
-      }
-      for (const c of job.config.concurrencies) {
-        if (job._abort.signal.aborted) {
-          if (job.status === "running") {
-            job.status = "cancelled";
-            job.error = "Cancelled by user";
-            job.progress.message = "Cancelled";
+        for (const c of job.config.concurrencies) {
+          if (job._abort.signal.aborted) {
+            if (job.status === "running") {
+              job.status = "cancelled";
+              job.error = "Cancelled by user";
+              job.progress.message = "Cancelled";
+            }
+            stop = true;
+            break;
           }
-          break;
-        }
 
-        job.progress.currentConcurrency = c;
-        job.progress.message = `Running concurrency ${c}…`;
-        this._checkpointActive();
+          job.progress.currentConcurrency = c;
+          job.progress.currentPromptType = promptType;
+          job.progress.message = `Running ${typeLabel} · concurrency ${c}…`;
+          this._checkpointActive();
 
-        const wave = await runConcurrencyWave({
-          baseUrl,
-          modelId: job.config.modelId,
-          concurrency: c,
-          maxTokens: job.config.maxTokens,
-          abortSignal: job._abort.signal,
-          sampleHardware: job._sampleHardware,
-          debug,
-          apiKey: job._apiKey,
-          promptType: job.config.promptType,
-          onLive: (tps) => {
-            job.progress.liveTps = tps;
-          },
-        });
+          const wave = await runConcurrencyWave({
+            baseUrl,
+            modelId: job.config.modelId,
+            concurrency: c,
+            maxTokens: job.config.maxTokens,
+            abortSignal: job._abort.signal,
+            sampleHardware: job._sampleHardware,
+            debug,
+            apiKey: job._apiKey,
+            promptType,
+            onLive: (tps) => {
+              job.progress.liveTps = tps;
+            },
+          });
+          wave.promptType = promptType;
 
-        if (job._abort.signal.aborted) {
-          // Keep partial wave only if it fully succeeded before cancel
-          if (wave.streamsOk > 0 && !wave.error) {
-            job.results.push(wave);
-            job.progress.completedLevels += 1;
+          if (job._abort.signal.aborted) {
+            // Keep partial wave only if it fully succeeded before cancel
+            if (wave.streamsOk > 0 && !wave.error) {
+              job.results.push(wave);
+              job.progress.completedLevels += 1;
+            }
+            if (job.status === "running") {
+              job.status = "cancelled";
+              job.error = "Cancelled by user";
+              job.progress.message = "Cancelled";
+            }
+            stop = true;
+            break;
           }
-          if (job.status === "running") {
-            job.status = "cancelled";
-            job.error = "Cancelled by user";
-            job.progress.message = "Cancelled";
+
+          if (wave.model && !job.config.modelId) {
+            job.config.modelId = wave.model;
           }
-          break;
-        }
 
-        if (wave.model && !job.config.modelId) {
-          job.config.modelId = wave.model;
+          job.results.push(wave);
+          job.progress.completedLevels += 1;
+          this._checkpointActive();
         }
-
-        job.results.push(wave);
-        job.progress.completedLevels += 1;
-        this._checkpointActive();
       }
 
       if (job.status === "running") {
         job.status = "completed";
         job.progress.currentConcurrency = null;
+        job.progress.currentPromptType = null;
         job.progress.message = "Done";
       }
     } catch (err) {

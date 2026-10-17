@@ -48,7 +48,7 @@ describe("decode served-model selection", () => {
     choose("beta");
     await act(async () => { button("Run benchmark").click(); button("Run benchmark").click(); });
     expect(startDecodeBench).toHaveBeenCalledTimes(1);
-    expect(startDecodeBench).toHaveBeenCalledWith("spark-a", { port: 8888, modelId: "beta", maxTokens: 400, concurrencies: [1, 2], promptType: "structured" });
+    expect(startDecodeBench).toHaveBeenCalledWith("spark-a", { port: 8888, modelId: "beta", maxTokens: 400, concurrencies: [1, 2], promptTypes: ["structured"] });
     expect(picker()!.disabled).toBe(true);
   });
 
@@ -77,6 +77,18 @@ describe("decode served-model selection", () => {
     if (change.open === false) act(() => root.render(<BenchmarkDialog {...props} />));
     await flush();
     expect(picker()!.value).toBe("alpha");
+  });
+
+  it("sends selected types in catalog order and does not turn on every concurrency", async () => {
+    render(<BenchmarkDialog {...props} />);
+    await flush();
+    await click("Prose");
+    await click("All types");
+    await click("Run benchmark");
+    expect(startDecodeBench).toHaveBeenCalledWith(
+      "spark-a",
+      expect.objectContaining({ promptTypes: ["structured", "prose", "code", "json"], concurrencies: [1, 2] })
+    );
   });
 
   it("uses the raw single request ID when the display model is normalized", async () => {

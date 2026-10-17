@@ -26,6 +26,10 @@ export function pickShowcasePrompts(
 ): string[];
 
 export function normalizeDecodeBenchType(type: unknown): DecodeBenchPromptType;
+export function normalizePromptTypes(raw: unknown): DecodeBenchPromptType[];
+export function promptTypesOf(
+  config: { promptTypes?: unknown; promptType?: unknown } | null | undefined
+): DecodeBenchPromptType[];
 export function decodeBenchPromptForType(type: unknown): string;
 export function decodeBenchTypeLabel(type: unknown): string;
 export function pickDecodeBenchPrompts(

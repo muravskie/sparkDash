@@ -20,6 +20,10 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:5555",
       "/metrics": "http://127.0.0.1:5555",
+      "/agent/proxy": {
+        target: "http://127.0.0.1:5555",
+        ws: true,
+      },
       "/ws": {
         target: "ws://127.0.0.1:5555",
         ws: true,
@@ -29,5 +33,11 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        preview: path.resolve(__dirname, "preview.html"),
+      },
+    },
   },
 });

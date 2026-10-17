@@ -3,7 +3,7 @@ import { Ring } from "../../ui/Ring";
 import { Tag } from "../../ui/Tag";
 import { GenericValue } from "./GenericResult";
 import { fmtDuration, fmtNum, scoreTier, toneColor } from "./format";
-import { CATEGORY_NAMES, type NormScenario, type NormToolResult, type ScenarioStatus } from "./normalize";
+import { CATEGORY_NAMES, RESPONSIVENESS_CURVE, formatMedianTurn, type NormScenario, type NormToolResult, type ScenarioStatus } from "./normalize";
 import { JsonDisclosure } from "./parts";
 
 const STATUS_TONE: Record<ScenarioStatus, "good" | "warn" | "bad" | "neutral"> = { pass: "good", partial: "warn", fail: "bad", other: "neutral" };
@@ -44,7 +44,13 @@ export function ToolResult({ data, raw }: { data: NormToolResult; raw: unknown }
           </p>
           <div className="te-tiles">
             <Tile label="Deployability" value={data.deployability} suffix="/100" />
-            <Tile label="Responsiveness" value={data.responsiveness} suffix="/100" />
+            <Tile
+              label="Responsiveness"
+              value={data.responsiveness}
+              suffix="/100"
+              detail={data.medianTurnMs != null ? `median ${formatMedianTurn(data.medianTurnMs)}` : null}
+              title={`Responsiveness maps median turn time: ${RESPONSIVENESS_CURVE}`}
+            />
             <div className="te-tile">
               <span className="eyebrow">Completion</span>
               <b className="big-num">
@@ -96,15 +102,28 @@ export function ToolResult({ data, raw }: { data: NormToolResult; raw: unknown }
   );
 }
 
-function Tile({ label, value, suffix }: { label: string; value: number | null; suffix?: string }) {
+function Tile({
+  label,
+  value,
+  suffix,
+  detail,
+  title,
+}: {
+  label: string;
+  value: number | null;
+  suffix?: string;
+  detail?: string | null;
+  title?: string;
+}) {
   const tier = scoreTier(value);
   return (
-    <div className="te-tile">
+    <div className="te-tile" title={title}>
       <span className="eyebrow">{label}</span>
       <b className="big-num">
         {value != null ? fmtNum(value, 1) : "–"}
         {value != null && suffix ? <small>{suffix}</small> : null}
       </b>
+      {detail ? <span className="te-faint">{detail}</span> : null}
       {tier ? <Tag tone={tier.tone}>{tier.label}</Tag> : null}
     </div>
   );

@@ -9,7 +9,7 @@
  * without a real canvas context.
  */
 import { formatDuration } from "../../shared/formatDuration";
-import { decodeBenchTypeLabel } from "../../shared/llmPrompts.js";
+import { decodeBenchTypeLabel, promptTypesOf } from "../../shared/llmPrompts.js";
 import { backendLabel } from "../../shared/llmBackends.js";
 import { formatContextSize } from "../../shared/prefillBench.js";
 import { QUALITY_CATEGORIES, QUALITY_CATEGORY_LABELS, checkQualityComparable } from "../../shared/qualityBench.js";
@@ -175,15 +175,22 @@ export function buildDecodeShareCard(
   src: ShareCardSource,
   now: number = Date.now()
 ): ShareCardModel {
+  const types = promptTypesOf(job.config);
+  const multi = types.length > 1;
   const rows = job.results
     .slice()
-    .sort((a, b) => a.concurrency - b.concurrency)
+    .sort((a, b) => {
+      const ta = types.indexOf(a.promptType ?? types[0]);
+      const tb = types.indexOf(b.promptType ?? types[0]);
+      if (ta !== tb) return ta - tb;
+      return a.concurrency - b.concurrency;
+    })
     .map<ShareCardRow>((r) => {
       const failed = r.totalDecodeTokens <= 0 && r.totalCompletionTokens <= 0;
       const streams = r.streamsOk + r.streamsFailed;
       const agg = r.aggregateDecodeTps > 0 ? r.aggregateDecodeTps : r.meanDecodeTps;
       return {
-        load: `×${r.concurrency}`,
+        load: multi && r.promptType ? `${decodeBenchTypeLabel(r.promptType)} ×${r.concurrency}` : `×${r.concurrency}`,
         detail: failed
           ? r.error || "failed"
           : `TTFT ${formatTtft(r.meanTtftMs)} · ${r.streamsOk}/${streams} streams`,
@@ -203,13 +210,13 @@ export function buildDecodeShareCard(
     subtitle: shareCardSubtitle(src),
     chips: shareCardChips(src),
     status: shareCardStatus(job.status),
-    meta: `${decodeBenchTypeLabel(job.config?.promptType)} · ${job.config?.maxTokens ?? "?"} tok · ${
+    meta: `${types.length ? types.map((t) => decodeBenchTypeLabel(t)).join(", ") : decodeBenchTypeLabel(job.config?.promptType)} · ${job.config?.maxTokens ?? "?"} tok · ${
       concurrencies.length ? `${concurrencies.join(", ")} conc` : "—"
     }${job.durationMs != null ? ` · ${formatDuration(job.durationMs)}` : ""}`,
     columns: { load: "Load", primary: "Aggregate", secondary: "Stream" },
     rows,
     legend:
-      "Aggregate — total decode tok/s across all concurrent streams. Stream — per-stream average decode.",
+      "Aggregate — tokens ÷ one shared first-to-last window. Stream — mean of each stream's own tok/s.",
     footer: "github.com/MiaAI-Lab/sparkDash",
     generatedAt: now,
   };

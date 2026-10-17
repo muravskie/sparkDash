@@ -8,7 +8,7 @@ import {
   listDecodeBench,
   startDecodeBench,
 } from "../../api/client";
-import type { DecodeBenchJob, DecodeBenchPromptType, LlmBenchTarget } from "../../api/types";
+import type { DecodeBenchJob, LlmBenchTarget } from "../../api/types";
 import { useModalPresence } from "../../hooks/useModalPresence";
 import { BenchCopyButton } from "./BenchCopyButton";
 import { BenchSwitcher, type BenchKind } from "./BenchSwitcher";
@@ -21,15 +21,34 @@ import { formatDuration } from "../../shared/formatDuration";
 import { formatLlmBaseUrl } from "../../shared/llmTarget.js";
 import {
   DECODE_BENCH_DEFAULT_TYPE,
+  DECODE_BENCH_TYPES,
   DECODE_BENCH_TYPE_META,
   decodeBenchTypeLabel,
-  normalizeDecodeBenchType,
+  promptTypesOf,
+  type DecodeBenchPromptType as PromptType,
 } from "../../shared/llmPrompts.js";
+import {
+  aggregateTps,
+  groupDecodeResults,
+  overlapRatio,
+  streamTps,
+  streamWindowTitle,
+  streamsDidNotOverlap,
+  sumTps,
+} from "./decodeRates";
+import { ThroughputCompare } from "./ThroughputCompare";
+import { checkDecodeComparable, compareDecodeRuns } from "./throughputCompare";
 
 const CONCURRENCY_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 32] as const;
 const DEFAULT_SELECTED = [1, 2];
 const DEFAULT_MAX_TOKENS = 400;
-const DEFAULT_PROMPT_TYPE: DecodeBenchPromptType = DECODE_BENCH_DEFAULT_TYPE;
+const DEFAULT_PROMPT_TYPE: PromptType = DECODE_BENCH_DEFAULT_TYPE;
+
+function typeListLabel(job: DecodeBenchJob): string {
+  const types = promptTypesOf(job.config);
+  if (types.length) return types.map((t) => decodeBenchTypeLabel(t)).join(", ");
+  return decodeBenchTypeLabel(job.config?.promptType);
+}
 
 interface BenchmarkDialogProps {
   /** Modal only; the page variant is always open. */
@@ -107,31 +126,38 @@ function formatTtft(ms: number): string {
  */
 function buildShareText(job: DecodeBenchJob, modelId: string | null): string {
   const name = modelId || "unknown model";
-  const typeLabel = decodeBenchTypeLabel(job.config?.promptType);
+  const typeLabel = typeListLabel(job);
   const head = `${name} | decode tok/s results (${typeLabel}):`;
+  const order = promptTypesOf(job.config);
+  const multi = order.length > 1;
 
   const lines = job.results
     .slice()
-    .sort((a, b) => a.concurrency - b.concurrency)
+    .sort((a, b) => {
+      const ta = order.indexOf((a.promptType ?? order[0]) as PromptType);
+      const tb = order.indexOf((b.promptType ?? order[0]) as PromptType);
+      if (ta !== tb) return ta - tb;
+      return a.concurrency - b.concurrency;
+    })
     .map((r) => {
+      const kind = multi && r.promptType ? `${decodeBenchTypeLabel(r.promptType)} ` : "";
       if (r.totalDecodeTokens > 0 || r.totalCompletionTokens > 0) {
-        const agg = r.aggregateDecodeTps > 0 ? r.aggregateDecodeTps : r.meanDecodeTps;
-        return `×${r.concurrency}  ${agg.toFixed(1)} agg  ${r.meanDecodeTps.toFixed(1)}/str  · TTFT ${formatTtft(r.meanTtftMs)}`;
+        return `${kind}×${r.concurrency}  ${aggregateTps(r).toFixed(1)} agg  ${sumTps(r).toFixed(1)} sum  ${streamTps(r).toFixed(1)}/str  · TTFT ${formatTtft(r.meanTtftMs)}`;
       }
-      return `×${r.concurrency}  failed${r.error ? ` — ${r.error}` : ""}`;
+      return `${kind}×${r.concurrency}  failed${r.error ? ` — ${r.error}` : ""}`;
     });
 
   return [head, "", ...lines].join("\n");
 }
 
-function resultAgg(r: DecodeBenchJob["results"][number]): number {
-  return r.aggregateDecodeTps > 0 ? r.aggregateDecodeTps : r.meanDecodeTps;
-}
-
 function ResultRow({ r, max }: { r: DecodeBenchJob["results"][number]; max: number }) {
-  const pct = max > 0 ? Math.max(2, Math.round((resultAgg(r) / max) * 100)) : 0;
+  const agg = aggregateTps(r);
+  const pct = max > 0 && agg > 0 ? Math.max(2, Math.round((agg / max) * 100)) : 0;
+  const overlap = overlapRatio(r);
+  const note = streamsDidNotOverlap(r) ? "Streams did not overlap." : null;
+  const tip = [r.error, streamWindowTitle(r)].filter(Boolean).join("\n");
   return (
-    <article className="bench-result-row" title={r.error || undefined}>
+    <article className="bench-result-row" title={tip || undefined}>
       <div className="bench-result-row__load">
         <span className="bench-result-row__badge">×{r.concurrency}</span>
         <div className="bench-result-row__facts">
@@ -147,30 +173,64 @@ function ResultRow({ r, max }: { r: DecodeBenchJob["results"][number]; max: numb
             </strong>{" "}
             streams
           </span>
+          {overlap != null ? (
+            <>
+              <span className="bench-result-row__sep" aria-hidden>
+                ·
+              </span>
+              <span>
+                overlap <strong>{overlap.toFixed(2)}</strong>
+              </span>
+            </>
+          ) : null}
         </div>
       </div>
 
-      <div className="bench-result-row__speeds">
+      <div className="bench-result-row__speeds bench-speeds--three">
         <div className="bench-result-row__metric">
-          <span className="bench-result-row__label">Aggregate</span>
-          <span className="bench-result-row__value bench-result-row__value--accent">
-            {(r.aggregateDecodeTps > 0 ? r.aggregateDecodeTps : r.meanDecodeTps).toFixed(1)}
+          <span className="bench-result-row__label">Stream</span>
+          <span className="bench-result-row__value">
+            {streamTps(r).toFixed(1)}
             <span className="bench-result-row__unit">tok/s</span>
           </span>
         </div>
         <div className="bench-result-row__metric">
-          <span className="bench-result-row__label">Stream</span>
+          <span className="bench-result-row__label">Sum</span>
           <span className="bench-result-row__value">
-            {r.meanDecodeTps.toFixed(1)}
+            {sumTps(r).toFixed(1)}
+            <span className="bench-result-row__unit">tok/s</span>
+          </span>
+        </div>
+        <div className="bench-result-row__metric">
+          <span className="bench-result-row__label">Aggregate</span>
+          <span className="bench-result-row__value bench-result-row__value--accent">
+            {agg.toFixed(1)}
             <span className="bench-result-row__unit">tok/s</span>
           </span>
         </div>
       </div>
+
+      {note ? <p className="bench-result-row__note">{note}</p> : null}
 
       <div className="bench-result-row__bar" aria-hidden>
         <i style={{ width: `${pct}%` }} />
       </div>
     </article>
+  );
+}
+
+function ResultGroups({ job, max }: { job: DecodeBenchJob; max: number }) {
+  return (
+    <>
+      {groupDecodeResults(job).map((g) => (
+        <div key={g.label ?? g.type ?? "levels"}>
+          {g.label ? <div className="bench-results__caption">{g.label}</div> : null}
+          {g.rows.map((r) => (
+            <ResultRow key={`${r.promptType ?? g.type ?? "t"}-${r.concurrency}`} r={r} max={max} />
+          ))}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -195,8 +255,9 @@ export function BenchmarkDialog({
   const [history, setHistory] = useState<DecodeBenchJob[]>([]);
   const [selected, setSelected] = useState<number[]>([...DEFAULT_SELECTED]);
   const [maxTokensDraft, setMaxTokensDraft] = useState(String(DEFAULT_MAX_TOKENS));
-  const [promptType, setPromptType] = useState<DecodeBenchPromptType>(DEFAULT_PROMPT_TYPE);
+  const [promptTypes, setPromptTypes] = useState<PromptType[]>([DEFAULT_PROMPT_TYPE]);
   const [job, setJob] = useState<DecodeBenchJob | null>(null);
+  const [compareId, setCompareId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [loadingLast, setLoadingLast] = useState(false);
@@ -262,12 +323,13 @@ export function BenchmarkDialog({
     if (j.config?.maxTokens != null) {
       setMaxTokensDraft(String(j.config.maxTokens));
     }
-    // Last-run type is shown on results; the picker always defaults to Structured
+    // Last-run types are shown on results; the picker always defaults to Structured
     // for the next Run. Only a still-running job pins the picker.
-    if (j.status === "running" && j.config?.promptType) {
-      setPromptType(normalizeDecodeBenchType(j.config.promptType));
+    if (j.status === "running") {
+      const types = promptTypesOf(j.config);
+      if (types.length) setPromptTypes(types);
     } else {
-      setPromptType(DEFAULT_PROMPT_TYPE);
+      setPromptTypes([DEFAULT_PROMPT_TYPE]);
     }
   }, []);
 
@@ -332,7 +394,7 @@ export function BenchmarkDialog({
   useEffect(() => {
     if (!open) {
       stopPoll();
-      setPromptType(DEFAULT_PROMPT_TYPE);
+      setPromptTypes([DEFAULT_PROMPT_TYPE]);
       return;
     }
     setError(null);
@@ -378,6 +440,17 @@ export function BenchmarkDialog({
     []
   );
 
+  const toggleType = (id: PromptType) => {
+    if (isRunning || starting) return;
+    setPromptTypes((prev) => {
+      if (prev.includes(id)) {
+        if (prev.length === 1) return prev;
+        return DECODE_BENCH_TYPES.filter((t) => t !== id && prev.includes(t));
+      }
+      return DECODE_BENCH_TYPES.filter((t) => t === id || prev.includes(t));
+    });
+  };
+
   const toggleConcurrency = (n: number) => {
     if (isRunning || starting) return;
     setSelected((prev) => {
@@ -401,6 +474,7 @@ export function BenchmarkDialog({
           setHistory(data.history ?? []);
           if (data.active?.status === "running" && pollRef.current == null && !startLockRef.current) {
             setJob(data.active);
+            setCompareId("");
             applyJobConfig(data.active);
             startPolling(data.active.benchId);
           }
@@ -422,6 +496,10 @@ export function BenchmarkDialog({
       setError("Select at least one concurrency level");
       return;
     }
+    if (promptTypes.length === 0) {
+      setError("Select at least one prompt type");
+      return;
+    }
     const maxTokens = parseInt(maxTokensDraft.trim(), 10);
     if (!Number.isInteger(maxTokens) || maxTokens < 64 || maxTokens > 2048) {
       setError("Max tokens must be an integer between 64 and 2048");
@@ -431,13 +509,14 @@ export function BenchmarkDialog({
     setStarting(true);
     setError(null);
     setJob(null);
+    setCompareId("");
     try {
       const started = await startDecodeBench(sparkId, {
         port: benchPort,
         concurrencies: selected,
         maxTokens,
         modelId: selectedModel || undefined,
-        promptType,
+        promptTypes,
         ...(remoteTarget
           ? { host: remoteTarget.host, tls: remoteTarget.tls }
           : {}),
@@ -468,6 +547,7 @@ export function BenchmarkDialog({
     stopPoll();
     setJob(null);
     setError(null);
+    setCompareId("");
   };
 
   const handleClear = async () => {
@@ -477,6 +557,7 @@ export function BenchmarkDialog({
       await clearDecodeBenchHistory(sparkId, benchPort);
       stopPoll();
       setJob(null);
+      setCompareId("");
       setHistory([]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -489,6 +570,7 @@ export function BenchmarkDialog({
     stopPoll();
     setError(null);
     setJob(found);
+    setCompareId("");
   };
 
   if (!mounted) return null;
@@ -502,7 +584,15 @@ export function BenchmarkDialog({
         )
       : 0;
 
-  const maxAgg = job ? Math.max(0, ...job.results.map(resultAgg)) : 0;
+  const maxAgg = job ? Math.max(0, ...job.results.map((r) => (aggregateTps(r) > 0 ? aggregateTps(r) : 0))) : 0;
+  const compareJob =
+    compareId && job && compareId !== job.benchId ? history.find((h) => h.benchId === compareId) ?? null : null;
+  const compareCheck = compareId
+    ? compareJob && job
+      ? checkDecodeComparable(job, compareJob)
+      : { ok: false, reason: "That run is no longer in history." }
+    : null;
+  const compareRows = compareJob && job && compareCheck?.ok ? compareDecodeRuns(job, compareJob) : [];
   const showConfig = (isPage || !job || job.status === "running") && !loadingLast;
   const showResults = job && job.status !== "running";
 
@@ -538,26 +628,33 @@ export function BenchmarkDialog({
                 <div className="bench-field__head">
                   <h3 className="bench-sheet__section-title">Type</h3>
                   <p className="bench-sheet__hint">
-                    {DECODE_BENCH_TYPE_META.find((t) => t.id === promptType)?.hint}
+                    {promptTypes.length === 1
+                      ? DECODE_BENCH_TYPE_META.find((t) => t.id === promptTypes[0])?.hint
+                      : "Selected types run in order, then each concurrency level."}
                     {" · temp 0, thinking off"}
                   </p>
                 </div>
-                <div
-                  className="bench-type-grid"
-                  role="radiogroup"
-                  aria-label="Decode benchmark type"
-                >
+                <div className="bench-type-grid" role="group" aria-label="Decode benchmark types">
+                  <button
+                    type="button"
+                    aria-pressed={promptTypes.length === DECODE_BENCH_TYPES.length}
+                    title="Select structured, prose, code, and JSON"
+                    disabled={isRunning || starting}
+                    onClick={() => setPromptTypes([...DECODE_BENCH_TYPES])}
+                    className={`bench-conc-btn${promptTypes.length === DECODE_BENCH_TYPES.length ? " is-on" : ""}`}
+                  >
+                    All types
+                  </button>
                   {DECODE_BENCH_TYPE_META.map((t) => {
-                    const on = promptType === t.id;
+                    const on = promptTypes.includes(t.id);
                     return (
                       <button
                         key={t.id}
                         type="button"
-                        role="radio"
-                        aria-checked={on}
+                        aria-pressed={on}
                         title={t.hint}
                         disabled={isRunning || starting}
-                        onClick={() => setPromptType(t.id)}
+                        onClick={() => toggleType(t.id)}
                         className={`bench-conc-btn${on ? " is-on" : ""}`}
                       >
                         {t.label}
@@ -599,7 +696,7 @@ export function BenchmarkDialog({
                   </label>
                   <p className="bench-sheet__hint">
                     Default 400 · temp 0, thinking off
-                    {promptType === "structured" ? " · count 1→200" : ""}
+                    {promptTypes.includes("structured") ? " · count 1→200" : ""}
                   </p>
                 </div>
                 <input
@@ -630,8 +727,8 @@ export function BenchmarkDialog({
                 <div className="bench-progress__row">
                   <span className="bench-progress__status">
                     Running
-                    {job.config?.promptType
-                      ? ` · ${decodeBenchTypeLabel(job.config.promptType)}`
+                    {job.progress.currentPromptType
+                      ? ` · ${decodeBenchTypeLabel(job.progress.currentPromptType)}`
                       : ""}
                     {job.progress.currentConcurrency != null
                       ? ` · ×${job.progress.currentConcurrency}`
@@ -656,9 +753,7 @@ export function BenchmarkDialog({
               {job.results.length > 0 && (
                 <div className="bench-results">
                   <div className="bench-results__caption">Completed levels</div>
-                  {job.results.map((r) => (
-                    <ResultRow key={r.concurrency} r={r} max={maxAgg} />
-                  ))}
+                  <ResultGroups job={job} max={maxAgg} />
                 </div>
               )}
             </section>
@@ -677,7 +772,7 @@ export function BenchmarkDialog({
                   {statusLabel(job.status)}
                 </span>
                 <span className="bench-status-meta">
-                  {decodeBenchTypeLabel(job.config.promptType)} · {job.config.maxTokens} tok ·{" "}
+                  {typeListLabel(job)} · {job.config.maxTokens} tok ·{" "}
                   {job.config.concurrencies.join(", ")} conc
                   {job.durationMs != null ? ` · ${formatDuration(job.durationMs)}` : ""}
                 </span>
@@ -685,25 +780,40 @@ export function BenchmarkDialog({
 
               {job.error && <p className="bench-sheet__error">{job.error}</p>}
 
+              {compareCheck ? (
+                <ThroughputCompare
+                  reason={compareCheck.ok ? null : compareCheck.reason}
+                  rows={compareRows}
+                  primaryLabel="Aggregate"
+                  secondaryLabel="Stream"
+                  thisLabel={job.config.modelId || "this run"}
+                  otherLabel={compareJob?.config.modelId || "other run"}
+                  onClear={() => setCompareId("")}
+                />
+              ) : null}
+
               {job.results.length > 0 && (
                 <div className="bench-results bench-results--table">
                   <div className="bench-results__head" aria-hidden="true">
                     <span>Load</span>
-                    <span className="bench-results__head-speeds">
-                      <span>Aggregate</span>
+                    <span className="bench-results__head-speeds bench-speeds--three">
                       <span>Stream</span>
+                      <span>Sum</span>
+                      <span>Aggregate</span>
                     </span>
                   </div>
-                  {job.results.map((r) => (
-                    <ResultRow key={r.concurrency} r={r} max={maxAgg} />
-                  ))}
+                  <ResultGroups job={job} max={maxAgg} />
                 </div>
               )}
 
               {job.results.length > 0 && (
                 <p className="bench-legend">
-                  <strong>Aggregate</strong> — total decode tok/s across all concurrent streams.{" "}
-                  <strong>Stream</strong> — per-stream average decode.
+                  <strong>Stream</strong> — mean of each stream&apos;s own tok/s, from its first token to its last.{" "}
+                  <strong>Sum</strong> — that mean times the streams that produced tokens. The rates added, not a claim
+                  they ran at the same instant. <strong>Aggregate</strong> — every decode token from those streams
+                  divided by one shared clock, from the earliest first token to the latest last token.{" "}
+                  <strong>Overlap</strong> — aggregate ÷ sum. When overlap is clearly below 1 and time-to-first-token
+                  is spread out, the streams did not overlap.
                 </p>
               )}
             </section>
@@ -750,7 +860,7 @@ export function BenchmarkDialog({
               type="button"
               className="btn btn--primary"
               onClick={() => void handleStart()}
-              disabled={starting || selected.length === 0}
+              disabled={starting || selected.length === 0 || promptTypes.length === 0}
             >
               {starting ? "Starting…" : "Run benchmark"}
             </button>
@@ -783,8 +893,8 @@ export function BenchmarkDialog({
         )}
         {!job && !loadingLast && (
           <PageEmpty title="No runs yet">
-            Pick a prompt type and concurrency levels, then run. Each level opens that many parallel streams and
-            reports aggregate and per-stream decode tok/s.
+            Pick prompt types and concurrency levels, then run. Each type walks the selected levels. Each level
+            opens that many parallel streams and reports stream, sum, and aggregate decode tok/s.
           </PageEmpty>
         )}
         {history.length > 0 && (
@@ -792,8 +902,10 @@ export function BenchmarkDialog({
             <HistoryTable
               rows={history.map(decodeHistoryRow)}
               activeId={job?.benchId ?? null}
-              labelHeader="Concurrency"
+              labelHeader="Run"
               onView={handleView}
+              onCompare={showResults && job.results.length > 0 ? setCompareId : undefined}
+              compareId={compareId}
               busy={isRunning || starting}
             />
           </PageCard>
@@ -908,7 +1020,7 @@ export function BenchmarkDialog({
                 type="button"
                 className="bench-btn bench-btn--primary"
                 onClick={() => void handleStart()}
-                disabled={starting || selected.length === 0 || !modelSelectionValid}
+                disabled={starting || selected.length === 0 || promptTypes.length === 0 || !modelSelectionValid}
               >
                 {starting ? "Starting…" : "Run benchmark"}
               </button>

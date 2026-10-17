@@ -955,11 +955,18 @@
   gap: 0.75rem;
   width: 100%;
 }
+.bench-result-row__speeds.bench-speeds--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 @media (min-width: 480px) {
   .bench-result-row__speeds {
     width: auto;
     flex: 0 0 auto;
     grid-template-columns: 6.75rem 6.75rem;
+  }
+  .bench-result-row__speeds.bench-speeds--three,
+  .bench-results__head-speeds.bench-speeds--three {
+    grid-template-columns: 5.25rem 5.25rem 6rem;
   }
 }
 .bench-result-row__metric {
@@ -1036,6 +1043,22 @@
 .bench-legend strong {
   font-weight: 600;
   color: var(--color-muted-strong);
+}
+.bench-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.25rem;
+}
+.bench-compare__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.bench-compare .bp-table td.bp-num,
+.bench-compare .bp-table th.bp-num {
+  text-align: right;
 }
 
 /* Footer buttons: same look as .btn, full-width flex on phones. */

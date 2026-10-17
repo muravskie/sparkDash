@@ -48,7 +48,7 @@ export const DEFAULT_CONTEXT_SIZES = PREFILL_DEFAULT_CONTEXT_SIZES;
 
 const WARMUP_TARGET_TOKENS = 512;
 const GEN_MAX_TOKENS = 8;
-const HISTORY_LIMIT = 10;
+const HISTORY_LIMIT = 30;
 /** The overhead correction never removes more than this share of the measured TTFT. */
 export const MAX_OVERHEAD_CORRECTION = 0.5;
 /** Above this overhead share of TTFT the corrected rate is mostly calibration, so the row is flagged. */

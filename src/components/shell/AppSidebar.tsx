@@ -18,9 +18,9 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { AuthMode, SparkSnapshot } from "../../api/types";
-import { ACTIVITY_ID, ENERGY_ID, OVERVIEW_ID, SHOWCASE_ID, TOKENS_ID, benchId, idToPath } from "../../constants";
+import { ACTIVITY_ID, AGENT_ID, ENERGY_ID, MODELS_ID, OVERVIEW_ID, PLAYGROUND_ID, SHOWCASE_ID, TOKENS_ID, benchId, idToPath } from "../../constants";
 import { BENCH_TYPES } from "../bench/benchCatalog";
-import { BoltIcon, ChevronDownIcon, GearIcon, GithubIcon, GlobeIcon, GridIcon, ListIcon, PanelLeftIcon, PlusIcon, SearchIcon, TerminalIcon, TokensIcon, XLogoIcon } from "../ui/icons";
+import { BoltIcon, ChevronDownIcon, CpuIcon, GearIcon, GithubIcon, GlobeIcon, GridIcon, ListIcon, MemoryIcon, PanelLeftIcon, PlusIcon, SearchIcon, TerminalIcon, TokensIcon, XLogoIcon, BotIcon } from "../ui/icons";
 import { OpenAccessChip } from "../OpenAccessChip";
 import { ThemeSwitch } from "../ThemeSwitch";
 import { isThrottling, railSubLabel } from "./sparkSummary";
@@ -340,6 +340,33 @@ export function AppSidebar({
           >
             <TerminalIcon className="h-4 w-4" />
             <span className="rail-item__name">Showcase</span>
+          </a>
+          <a
+            href={idToPath(PLAYGROUND_ID)}
+            className={`rail-item ${activeId === PLAYGROUND_ID ? "is-active" : ""}`}
+            onClick={inApp(() => onSelect(PLAYGROUND_ID))}
+            aria-current={activeId === PLAYGROUND_ID ? "page" : undefined}
+          >
+            <BotIcon className="h-4 w-4" />
+            <span className="rail-item__name">Playground</span>
+          </a>
+          <a
+            href={idToPath(MODELS_ID)}
+            className={`rail-item ${activeId === MODELS_ID ? "is-active" : ""}`}
+            onClick={inApp(() => onSelect(MODELS_ID))}
+            aria-current={activeId === MODELS_ID ? "page" : undefined}
+          >
+            <MemoryIcon className="h-4 w-4" />
+            <span className="rail-item__name">Models</span>
+          </a>
+          <a
+            href={idToPath(AGENT_ID)}
+            className={`rail-item ${activeId === AGENT_ID ? "is-active" : ""}`}
+            onClick={inApp(() => onSelect(AGENT_ID))}
+            aria-current={activeId === AGENT_ID ? "page" : undefined}
+          >
+            <CpuIcon className="h-4 w-4" />
+            <span className="rail-item__name">Agent</span>
           </a>
         </nav>
       </div>

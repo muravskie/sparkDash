@@ -1,4 +1,3 @@
-import { withPageTransition } from "./pageTransition";
 import { useEffect, useCallback, useMemo, useState } from "react";
 import { idToPath, pathToId } from "../constants";
 
@@ -38,7 +37,7 @@ export function useAppRoute(): AppRoute {
 }
 
 export interface RouteActions {
-  /** Switch view: pushes a history entry, runs the page transition and scrolls to the top. */
+  /** Switch view: pushes a history entry and scrolls to the top. */
   navigate: (id: string | null) => void;
   /** Switch view without adding a history entry (correcting a URL that no longer fits). */
   replace: (id: string | null) => void;
@@ -53,6 +52,9 @@ export interface RouteActions {
  *   /spark/:id             → Spark detail page
  *   /bench/:type           → benchmark page
  *   /showcase/:id          → full-screen showcase (handled separately via useAppRoute)
+ *   /playground            → streaming chat
+ *   /models                → model controller lifecycle
+ *   /agent                 → OpenCode on uba
  *
  * The initial id comes from `initialActiveId()` in constants (pass it to the state's initialiser).
  * `navigate(id)` updates the URL and the active id; Back/forward work via popstate.
@@ -62,7 +64,7 @@ export function useRoute(setActiveId: (id: string | null) => void): RouteActions
   useEffect(() => {
     const handler = () => {
       const id = pathToId(window.location.pathname);
-      if (id !== null) withPageTransition(() => setActiveId(id));
+      if (id !== null) setActiveId(id);
     };
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
@@ -71,7 +73,8 @@ export function useRoute(setActiveId: (id: string | null) => void): RouteActions
   const navigate = useCallback(
     (id: string | null) => {
       window.history.pushState(null, "", idToPath(id));
-      withPageTransition(() => setActiveId(id), { scrollTop: true });
+      setActiveId(id);
+      window.scrollTo(0, 0);
     },
     [setActiveId]
   );

@@ -87,12 +87,13 @@ export function HistoryTable({
   activeId: string | null;
   labelHeader: string;
   onView: (id: string) => void;
-  /** Quality only: pick a run to compare the open one against. */
+  /** Pick a run to compare the open one against. */
   onCompare?: (id: string) => void;
   compareId?: string;
   /** A run is in flight, so opening another would replace its live view. */
   busy: boolean;
 }) {
+  const showPort = rows.some((r) => r.port != null);
   return (
     <div className="bp-table-wrap">
       <table className="bp-table">
@@ -100,6 +101,7 @@ export function HistoryTable({
           <tr>
             <th>Date</th>
             <th>{labelHeader}</th>
+            {showPort ? <th className="bp-num">Port</th> : null}
             <th className="bp-model">Model</th>
             <th className="bp-num">Result</th>
             <th aria-label="Actions" />
@@ -115,6 +117,7 @@ export function HistoryTable({
                 ) : null}
               </td>
               <td className="bp-clip">{r.label}</td>
+              {showPort ? <td className="bp-num">{r.port ?? "—"}</td> : null}
               <td className="bp-clip bp-model mono" title={r.model ?? undefined}>
                 {r.model ?? "—"}
               </td>

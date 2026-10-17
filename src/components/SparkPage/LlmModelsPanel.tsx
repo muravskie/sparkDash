@@ -10,6 +10,7 @@ import { Panel } from "../ui/Panel";
 import { Tag, type TagTone } from "../ui/Tag";
 import { BotIcon, EditIcon, ExpandIcon, PlusIcon, XIcon } from "../ui/icons";
 import { LlmLauncherDialog } from "./LlmLauncherDialog";
+import { fetchModels, type ScriptGuardState } from "../models/api";
 
 const AUTOSHOW_KEY = "sparkdash.llm.autoShowOutput";
 const STATUS_REFRESH_MS = 20_000;
@@ -148,6 +149,7 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
   const [autoShow, setAutoShow] = useState(readAutoShow);
   const [queuedStart, setQueuedStart] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [guard, setGuard] = useState<ScriptGuardState | null>(null);
   const { job, lines, partial, truncated, error: jobError, follow, cancel } = useLauncherJob(sparkId);
   const adoptedRef = useRef(false);
 
@@ -174,9 +176,23 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
     [sparkId]
   );
 
+  const loadGuard = useCallback(async () => {
+    if (!online) {
+      setGuard(null);
+      return;
+    }
+    try {
+      const board = await fetchModels(sparkId);
+      setGuard(board.scriptGuard);
+    } catch {
+      setGuard(null);
+    }
+  }, [online, sparkId]);
+
   // First load: also adopt a job the server is still running (e.g. after a page reload).
   useEffect(() => {
     adoptedRef.current = false;
+    void loadGuard();
     void refresh(true).then((res) => {
       if (res?.job && !adoptedRef.current) {
         adoptedRef.current = true;
@@ -184,16 +200,19 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
         if (res.job.status === "running") setTermOpen(true);
       }
     });
-  }, [sparkId, refresh, follow]);
+  }, [sparkId, refresh, follow, loadGuard]);
 
   // Keep running/stopped fresh while the page is open.
   useEffect(() => {
     if (!online) return;
     const t = window.setInterval(() => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) {
+        void refresh();
+        void loadGuard();
+      }
     }, STATUS_REFRESH_MS);
     return () => window.clearInterval(t);
-  }, [online, refresh]);
+  }, [online, refresh, loadGuard]);
 
   // A finished job changes what is running: re-check, and run a queued start after its stop.
   const lastStatusRef = useRef<string | null>(null);
@@ -212,7 +231,17 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job, queuedStart, refresh]);
 
+  function held(launcherId: string) {
+    return Boolean(guard && (guard.hideAll || guard.blockedIds.includes(launcherId)));
+  }
+
   async function run(launcherId: string, action: LauncherAction) {
+    if ((action === "start" || action === "stop") && held(launcherId)) {
+      setConfirm(null);
+      setQueuedStart(null);
+      setActionError(guard?.reason || "The model controller owns this workload.");
+      return;
+    }
     setActionError(null);
     setConfirm(null);
     try {
@@ -230,6 +259,10 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
   }
 
   function requestStart(l: LlmLauncher) {
+    if (held(l.id)) {
+      setActionError(guard?.reason || "The model controller owns this workload.");
+      return;
+    }
     const other = launchers.find((x) => x.id !== l.id && statuses[x.id] === "running");
     if (other) setConfirm({ kind: "switch", id: l.id, otherId: other.id });
     else void run(l.id, "start");
@@ -279,7 +312,8 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
     const live = portIdx >= 0 ? spark.metrics.llm?.[portIdx] : null;
     const serving = Boolean(live?.available);
     const mine = job?.launcherId === l.id;
-    const pending = confirm?.id === l.id ? confirm : null;
+    const heldByController = held(l.id);
+    const pending = heldByController && confirm?.kind !== "remove" ? null : confirm?.id === l.id ? confirm : null;
     const other = pending?.kind === "switch" ? byId.get(pending.otherId) : null;
     return (
       <li key={l.id} className="sp-launch" data-state={state}>
@@ -335,6 +369,40 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
               </button>
               <button type="button" className="btn btn--sm btn--ghost" onClick={() => setConfirm(null)}>
                 Cancel
+              </button>
+            </>
+          ) : heldByController ? (
+            <>
+              {state === "running" ? (
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  disabled={busy}
+                  onClick={() => void run(l.id, "attach")}
+                  title="Show what the running start script is printing"
+                >
+                  Output
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="sp-iconbtn"
+                aria-label={`Edit ${l.name}`}
+                title="Edit"
+                disabled={busy && mine}
+                onClick={() => setDialog({ open: true, launcher: l })}
+              >
+                <EditIcon className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="sp-iconbtn"
+                aria-label={`Remove ${l.name}`}
+                title="Remove from list"
+                disabled={busy && mine}
+                onClick={() => setConfirm({ kind: "remove", id: l.id })}
+              >
+                <XIcon className="h-3.5 w-3.5" />
               </button>
             </>
           ) : (
@@ -436,6 +504,9 @@ function LlmModelsPanelFor({ spark, className }: { spark: SparkSnapshot; classNa
               Add your first model
             </button>
           </div>
+        ) : null}
+        {guard && (guard.hideAll || guard.blockedIds.length > 0) && guard.reason ? (
+          <p className="sp-models__hint">{guard.reason}</p>
         ) : null}
         {launchers.length > 0 ? <ul className="sp-models__list">{rows}</ul> : null}
         {!online && launchers.length > 0 ? <p className="sp-models__hint">{spark.name} is offline, so models cannot be started or stopped.</p> : null}

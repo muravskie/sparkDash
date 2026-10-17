@@ -39,7 +39,7 @@ import {
 } from "../../shared/qualityBench.js";
 import { QUALITY_CATEGORY_INFO } from "./qualityCategoryInfo";
 import { HistoryTable, PageCard, PageEmpty, PageLayout } from "../bench/sparkdash/pageParts";
-import { qualityHistoryRow } from "../bench/sparkdash/historyRows";
+import { filterHistoryByPort, qualityHistoryRow } from "../bench/sparkdash/historyRows";
 import { formatContextSize } from "../../shared/prefillBench.js";
 import { formatLlmBaseUrl } from "../../shared/llmTarget.js";
 
@@ -532,6 +532,7 @@ export function QualityBenchDialog({
   const [label, setLabel] = useState("");
   const [job, setJob] = useState<QualityBenchJob | null>(null);
   const [history, setHistory] = useState<QualityBenchJob[]>([]);
+  const [historyScope, setHistoryScope] = useState<"all" | "port">("all");
   const [compareId, setCompareId] = useState("");
   const [compareJob, setCompareJob] = useState<QualityBenchJob | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -789,8 +790,8 @@ export function QualityBenchDialog({
     try {
       await clearQualityBenchHistory(sparkId, benchPort);
       stopPoll();
-      setJob(null);
-      setHistory([]);
+      setHistory((prev) => prev.filter((j) => j.config?.port !== benchPort));
+      if (job.config?.port === benchPort) setJob(null);
       setCompareId("");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1140,6 +1141,8 @@ export function QualityBenchDialog({
       />
     ) : null;
 
+  const visibleHistory = filterHistoryByPort(history, historyScope, benchPort);
+
   if (isPage) {
     return (
       <PageLayout
@@ -1181,16 +1184,46 @@ export function QualityBenchDialog({
           </PageEmpty>
         )}
         {history.length > 0 && (
-          <PageCard title={`History · ${history.length}`}>
-            <HistoryTable
-              rows={history.map(qualityHistoryRow)}
-              activeId={job?.benchId ?? null}
-              labelHeader="Label"
-              onView={handleView}
-              onCompare={showResults && hasItems ? setCompareId : undefined}
-              compareId={compareId}
-              busy={isRunning || starting}
-            />
+          <PageCard
+            title={
+              historyScope === "port"
+                ? `History · ${visibleHistory.length} of ${history.length}`
+                : `History · ${history.length}`
+            }
+            tools={
+              <span className="bp-port-filter" role="group" aria-label="History ports">
+                <button
+                  type="button"
+                  className={`btn btn--sm${historyScope === "all" ? "" : " btn--ghost"}`}
+                  aria-pressed={historyScope === "all"}
+                  onClick={() => setHistoryScope("all")}
+                >
+                  All ports
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn--sm${historyScope === "port" ? "" : " btn--ghost"}`}
+                  aria-pressed={historyScope === "port"}
+                  onClick={() => setHistoryScope("port")}
+                >
+                  Port {benchPort}
+                </button>
+              </span>
+            }
+          >
+            {visibleHistory.length === 0 ? (
+              <p className="bench-sheet__hint">No saved runs on port {benchPort}.</p>
+            ) : (
+              <HistoryTable
+                rows={visibleHistory.map(qualityHistoryRow)}
+                activeId={job?.benchId ?? null}
+                labelHeader="Label"
+                onView={handleView}
+                onCompare={showResults && hasItems ? setCompareId : undefined}
+                compareId={compareId}
+                busy={isRunning || starting}
+              />
+            )}
           </PageCard>
         )}
       </PageLayout>

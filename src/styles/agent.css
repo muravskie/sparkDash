@@ -1,0 +1,29 @@
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+}
+.agent-note,
+.agent-empty p {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.agent-empty h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 650;
+}
+.agent-error {
+  color: var(--color-danger, #d45d5d);
+  font-size: 13px;
+}
+.agent-frame {
+  width: 100%;
+  height: calc(100dvh - 220px);
+  min-height: 480px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}

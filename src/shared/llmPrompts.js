@@ -168,6 +168,37 @@ export function normalizeDecodeBenchType(type) {
 }
 
 /**
+ * Selected decode types, catalog order, unknowns dropped. Empty means nothing valid
+ * was selected — callers choose the default or reject the request.
+ * @param {unknown} raw
+ * @returns {Array<"structured" | "prose" | "code" | "json">}
+ */
+export function normalizePromptTypes(raw) {
+  if (!Array.isArray(raw)) return [];
+  const wanted = new Set();
+  for (const v of raw) {
+    const t = String(v ?? "").trim().toLowerCase();
+    if (DECODE_BENCH_TYPES.includes(t)) wanted.add(t);
+  }
+  return DECODE_BENCH_TYPES.filter((t) => wanted.has(t));
+}
+
+/**
+ * Types a saved job ran. `promptTypes` wins; older jobs only stored `promptType`.
+ * Nothing recorded stays empty — do not invent structured.
+ * @param {{ promptTypes?: unknown, promptType?: unknown } | null | undefined} config
+ * @returns {Array<"structured" | "prose" | "code" | "json">}
+ */
+export function promptTypesOf(config) {
+  if (!config || typeof config !== "object") return [];
+  if (Array.isArray(config.promptTypes) && config.promptTypes.length) {
+    return normalizePromptTypes(config.promptTypes);
+  }
+  if (config.promptType) return [normalizeDecodeBenchType(config.promptType)];
+  return [];
+}
+
+/**
  * @param {unknown} type
  * @returns {string}
  */

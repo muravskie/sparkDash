@@ -781,6 +781,8 @@ export interface DecodeBenchConfig {
   maxTokens: number;
   /** Output-shape label only — not guided decoding / JSON schema. */
   promptType?: DecodeBenchPromptType;
+  /** Types this job walks, catalog order. Older jobs only have promptType. */
+  promptTypes?: DecodeBenchPromptType[];
   /** On-demand remote host (Tailscale HTTPS, etc.). */
   host?: string;
   tls?: boolean;
@@ -800,6 +802,9 @@ export interface DecodeBenchStreamResult {
   prefillTokens: number;
   totalMs: number;
   error: string | null;
+  /** Monotonic wave-clock time of the first and last content token. */
+  tFirst?: number | null;
+  tLast?: number | null;
   /** Exact prompt used for this stream (debug). */
   prompt?: string | null;
   /** Compact HTTP/SSE trace (no full completion body). */
@@ -857,6 +862,8 @@ export interface DecodeBenchLevelResult {
   error: string | null;
   streams: DecodeBenchStreamResult[];
   model: string | null;
+  /** Set on waves from a multi-type job. Older waves omit it and use config.promptType. */
+  promptType?: DecodeBenchPromptType;
   /** ~1 Hz GPU/VRAM/power samples during the wave (debug). */
   hardwareSamples?: Array<{
     t: number;
@@ -873,6 +880,7 @@ export interface DecodeBenchLevelResult {
 
 export interface DecodeBenchProgress {
   currentConcurrency: number | null;
+  currentPromptType?: DecodeBenchPromptType | null;
   completedLevels: number;
   totalLevels: number;
   message: string;
@@ -915,7 +923,9 @@ export interface StartDecodeBenchRequest {
   concurrencies: number[];
   maxTokens?: number;
   modelId?: string | null;
-  /** Output type: structured (default), prose, code, json. Prompt only. */
+  /** Output types the job walks. Prompt only. */
+  promptTypes?: DecodeBenchPromptType[];
+  /** Output type: structured (default), prose, code, json. Prompt only. Older single-type request. */
   promptType?: DecodeBenchPromptType;
   /** On-demand remote LLM host (hostname or URL). Skips this Spark's LAN/SSH path. */
   host?: string;

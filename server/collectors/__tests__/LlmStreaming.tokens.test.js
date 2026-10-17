@@ -186,6 +186,25 @@ test("runStreamingRequest ignores malformed or empty timings and cached_tokens",
   assert.equal(r.cachedPromptTokens, 0);
 });
 
+test("runStreamingRequest surfaces tool-call fragments on onDelta", async () => {
+  const deltas = [];
+  const result = await withSse(
+    [
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "lookup", arguments: "" } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "{\"a\":1}" } }] } }] },
+    ],
+    (url) =>
+      runStreamingRequest(url, { stream: true }, AbortSignal.timeout(5_000), {
+        onDelta: (delta) => deltas.push(delta.toolCalls),
+      })
+  );
+  assert.equal(result.error, null);
+  assert.equal(deltas.length, 2);
+  assert.equal(deltas[0][0].id, "call_1");
+  assert.equal(deltas[0][0].name, "lookup");
+  assert.equal(deltas[1][0].arguments, "{\"a\":1}");
+});
+
 test("shared LLM dispatcher cleanup is idempotent", async () => {
   const first = closeLlmStreamAgent();
   const second = closeLlmStreamAgent();

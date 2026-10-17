@@ -21,6 +21,7 @@ import { ENGINE_GENERATED_LABEL, ENGINE_GENERATED_TITLE } from "./tokenTotalsCop
 import { parseLlmTargetInput } from "../../shared/llmTarget.js";
 import { backendLabel } from "../../shared/llmBackends.js";
 import { LlmTrendChart } from "./LlmTrendChart";
+import { LlmMetricOverlay } from "../charts/MetricOverlayChart";
 import type { BenchKind } from "./BenchSwitcher";
 import { engineStateLabel } from "./llmEngineState";
 import { idleLabel, isLlmIdle } from "../../shared/llmIdle";
@@ -819,6 +820,8 @@ export function LlmPanel({
               </div>
             </div>
           )}
+
+          <LlmMetricOverlay sparkId={sparkId} llmPort={llmPort} llm={llm ?? null} active={available} />
 
           <div className="sp-tiles">
             {showEngineTiles && kvValue != null && tile("kvCache", "KV cache", kvValue, { tone: kvTone, sub: kvSub || undefined })}

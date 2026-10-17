@@ -25,6 +25,8 @@ import {
 import { prefillFitsContext } from "../../shared/contextFit.js";
 import { HistoryTable, PageCard, PageEmpty, PageLayout } from "../bench/sparkdash/pageParts";
 import { prefillHistoryRow } from "../bench/sparkdash/historyRows";
+import { ThroughputCompare } from "./ThroughputCompare";
+import { checkPrefillComparable, comparePrefillRuns } from "./throughputCompare";
 import { formatDuration } from "../../shared/formatDuration";
 import { formatLlmBaseUrl } from "../../shared/llmTarget.js";
 
@@ -232,6 +234,7 @@ export function PrefillBenchDialog({
   const [selected, setSelected] = useState<number[]>(() => defaultSelected(contextLength));
   const [customDraft, setCustomDraft] = useState("");
   const [job, setJob] = useState<PrefillBenchJob | null>(null);
+  const [compareId, setCompareId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [loadingLast, setLoadingLast] = useState(false);
@@ -420,6 +423,7 @@ export function PrefillBenchDialog({
           setHistory(data.history ?? []);
           if (data.active?.status === "running" && pollRef.current == null && !startLockRef.current) {
             setJob(data.active);
+            setCompareId("");
             startPolling(data.active.benchId);
           }
         })
@@ -441,6 +445,7 @@ export function PrefillBenchDialog({
     setStarting(true);
     setError(null);
     setJob(null);
+    setCompareId("");
     try {
       const started = await startPrefillBench(sparkId, {
         port: benchPort,
@@ -476,6 +481,7 @@ export function PrefillBenchDialog({
     stopPoll();
     setJob(null);
     setError(null);
+    setCompareId("");
   };
 
   const handleClear = async () => {
@@ -485,6 +491,7 @@ export function PrefillBenchDialog({
       await clearPrefillBenchHistory(sparkId, benchPort);
       stopPoll();
       setJob(null);
+      setCompareId("");
       setHistory([]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -497,6 +504,7 @@ export function PrefillBenchDialog({
     stopPoll();
     setError(null);
     setJob(found);
+    setCompareId("");
   };
 
   if (!mounted) return null;
@@ -513,6 +521,14 @@ export function PrefillBenchDialog({
   const maxPrefill = job ? Math.max(0, ...job.results.map((r) => r.prefillTps)) : 0;
   const showConfig = (isPage || !job || job.status === "running") && !loadingLast;
   const showResults = job && job.status !== "running";
+  const compareJob =
+    compareId && job && compareId !== job.benchId ? history.find((h) => h.benchId === compareId) ?? null : null;
+  const compareCheck = compareId
+    ? compareJob && job
+      ? checkPrefillComparable(job, compareJob)
+      : { ok: false, reason: "That run is no longer in history." }
+    : null;
+  const compareRows = compareJob && job && compareCheck?.ok ? comparePrefillRuns(job, compareJob) : [];
   const ctxHint =
     contextLength != null && contextLength > 0
       ? `Model context ${formatContextSize(contextLength)} — larger sizes are disabled.`
@@ -668,6 +684,18 @@ export function PrefillBenchDialog({
 
               {job.error && <p className="bench-sheet__error">{job.error}</p>}
 
+              {compareCheck ? (
+                <ThroughputCompare
+                  reason={compareCheck.ok ? null : compareCheck.reason}
+                  rows={compareRows}
+                  primaryLabel="Prefill"
+                  secondaryLabel={null}
+                  thisLabel={job.config.modelId || "this run"}
+                  otherLabel={compareJob?.config.modelId || "other run"}
+                  onClear={() => setCompareId("")}
+                />
+              ) : null}
+
               {job.results.length > 0 && (
                 <div className="bench-results bench-results--table">
                   <div className="bench-results__head" aria-hidden="true">
@@ -783,6 +811,8 @@ export function PrefillBenchDialog({
               activeId={job?.benchId ?? null}
               labelHeader="Context sizes"
               onView={handleView}
+              onCompare={showResults && job.results.length > 0 ? setCompareId : undefined}
+              compareId={compareId}
               busy={isRunning || starting}
             />
           </PageCard>

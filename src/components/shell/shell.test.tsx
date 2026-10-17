@@ -4,6 +4,7 @@ import { AppSidebar, RAIL_KEYBOARD_CODES, markRailDrop } from "./AppSidebar";
 import { MobileTabBar } from "./MobileTabBar";
 import { CommandPalette, filterCommands, fuzzyScore, type PaletteCommand } from "./CommandPalette";
 import { railSubLabel, showcaseTarget } from "./sparkSummary";
+import { PLAYGROUND_ID } from "../../constants";
 import { makeSpark } from "../../testing/fixtures";
 import { render } from "../../testing/render";
 
@@ -196,6 +197,19 @@ describe("MobileTabBar sheet", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("puts Playground on the tab bar between Sparks and Stats", () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <MobileTabBar sparks={[makeSpark("a")]} activeId={PLAYGROUND_ID} onSelect={onSelect} onAdd={() => {}} onOpenSettings={() => {}} />
+    );
+    const tabs = [...container.querySelectorAll(".tabbar button")];
+    expect(tabs.map((button) => button.textContent)).toEqual(["Overview", "Sparks", "Playground", "Stats", "Settings"]);
+    expect(container.querySelector(".tabbar")?.getAttribute("data-tab")).toBe("2");
+    expect(tabs[2].getAttribute("aria-current")).toBe("page");
+    act(() => tabs[2].click());
+    expect(onSelect).toHaveBeenCalledWith(PLAYGROUND_ID);
+  });
+
   it("Stats opens Token totals, Fleet energy and Activity; Sparks no longer lists them; Showcase follows Prefill", () => {
     const { container } = render(
       <MobileTabBar sparks={[makeSpark("a")]} activeId={null} onSelect={() => {}} onAdd={() => {}} onOpenSettings={() => {}} />
@@ -215,5 +229,8 @@ describe("MobileTabBar sheet", () => {
     expect(names).not.toContain("Fleet energy");
     expect(names).not.toContain("Activity");
     expect(names.indexOf("Showcase")).toBe(names.indexOf("Prefill") + 1);
+    expect(names).not.toContain("Playground");
+    expect(names.indexOf("Models")).toBe(names.indexOf("Showcase") + 1);
+    expect(names.indexOf("Agent")).toBe(names.indexOf("Models") + 1);
   });
 });

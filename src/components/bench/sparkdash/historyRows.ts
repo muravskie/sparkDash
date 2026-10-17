@@ -1,4 +1,5 @@
 import type { DecodeBenchJob, PrefillBenchJob, QualityBenchJob } from "../../../api/types";
+import { decodeBenchTypeLabel, promptTypesOf } from "../../../shared/llmPrompts.js";
 import { formatContextSize } from "../../../shared/prefillBench.js";
 
 /** One line of a bench page's run-history table. */
@@ -13,6 +14,8 @@ export interface HistoryRow {
   headline: string;
   /** Secondary facts for the same run. */
   detail: string;
+  /** Quality history: the LLM port the run used. */
+  port?: number | null;
 }
 
 function aggregate(r: DecodeBenchJob["results"][number]): number {
@@ -27,11 +30,14 @@ export function decodeHistoryRow(job: DecodeBenchJob): HistoryRow {
     null
   );
   const single = ok.find((r) => r.concurrency === 1);
+  const types = promptTypesOf(job.config);
+  const typeLabel = types.map((t) => decodeBenchTypeLabel(t)).join(", ");
+  const conc = `×${job.config.concurrencies.join(", ")}`;
   return {
     id: job.benchId,
     startedAt: job.startedAt,
     status: job.status,
-    label: `×${job.config.concurrencies.join(", ")}`,
+    label: typeLabel ? `${typeLabel} · ${conc}` : conc,
     model: job.config.modelId ?? job.results.find((r) => r.model)?.model ?? null,
     headline: best ? `${aggregate(best).toFixed(1)} tok/s` : "—",
     detail: [
@@ -73,5 +79,16 @@ export function qualityHistoryRow(job: QualityBenchJob): HistoryRow {
     model: job.config.modelId ?? null,
     headline: overall == null ? "—" : `${overall.toFixed(1)}%`,
     detail: cats ? `${cats} categor${cats === 1 ? "y" : "ies"}` : "",
+    port: job.config?.port ?? null,
   };
+}
+
+/** All stored runs, or only the port selected for the next run. */
+export function filterHistoryByPort<T extends { config?: { port?: number | null } }>(
+  rows: readonly T[],
+  scope: "all" | "port",
+  port: number
+): T[] {
+  if (scope !== "port") return [...rows];
+  return rows.filter((row) => row.config?.port === port);
 }

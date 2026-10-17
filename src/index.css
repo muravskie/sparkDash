@@ -808,40 +808,6 @@ html {
   background: var(--color-muted);
 }
 
-/* ─── Page transitions ─────────────────────────────────── */
-/* Only <main> animates (hooks/pageTransition.ts); the sidebar swaps its highlight with a short cross-fade. */
-.app-content > main {
-  view-transition-name: page;
-}
-::view-transition-group(root) {
-  animation-duration: 0.18s;
-}
-::view-transition-old(page) {
-  animation: page-out 0.16s cubic-bezier(0.4, 0, 1, 1) both;
-}
-::view-transition-new(page) {
-  animation: page-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.04s both;
-}
-@keyframes page-out {
-  to {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.997);
-  }
-}
-@keyframes page-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.994);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation: none !important;
-  }
-}
-
 /* ─── Press + hover feel ───────────────────────────────── */
 .btn,
 .icon-circle,

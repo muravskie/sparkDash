@@ -15,6 +15,8 @@ import {
   pickShowcasePrompts,
   pickDecodeBenchPrompts,
   normalizeDecodeBenchType,
+  normalizePromptTypes,
+  promptTypesOf,
   decodeBenchPromptForType,
   withFillToMaxInstruction,
 } from "../../../src/shared/llmPrompts.js";
@@ -119,4 +121,14 @@ test("concurrent structural streams are unique until the catalog wraps", () => {
 test("import path from collectors resolves src/shared (Docker + Node)", async () => {
   const mod = await import("../DecodeBench.js");
   assert.equal(mod.DECODE_BENCH_DEFAULTS.defaultMaxTokens, 400);
+});
+
+test("normalizePromptTypes keeps catalog order and drops unknowns", () => {
+  assert.deepEqual(normalizePromptTypes(["json", "prose", "nope", "prose"]), ["prose", "json"]);
+  assert.deepEqual(normalizePromptTypes("structured"), []);
+  assert.deepEqual(normalizePromptTypes([]), []);
+  assert.deepEqual(promptTypesOf({ promptType: "code" }), ["code"]);
+  assert.deepEqual(promptTypesOf({ promptTypes: ["json"], promptType: "structured" }), ["json"]);
+  assert.deepEqual(promptTypesOf({}), []);
+  assert.deepEqual(promptTypesOf(null), []);
 });

@@ -259,11 +259,31 @@ export function promptTextFromBody(body) {
   return parts.join("\n");
 }
 
+/** Tool-call fragments on one OpenAI delta. Names and arguments arrive in pieces. */
+function extractToolCallFragments(delta) {
+  const calls = delta?.tool_calls;
+  if (!Array.isArray(calls)) return [];
+  /** @type {{ index: number, id?: string, name?: string, arguments?: string }[]} */
+  const out = [];
+  for (const call of calls) {
+    if (!call || typeof call !== "object") continue;
+    const fn = call.function && typeof call.function === "object" ? call.function : null;
+    /** @type {{ index: number, id?: string, name?: string, arguments?: string }} */
+    const frag = { index: Number.isInteger(call.index) ? call.index : out.length };
+    if (typeof call.id === "string" && call.id) frag.id = call.id;
+    if (fn && typeof fn.name === "string" && fn.name) frag.name = fn.name;
+    if (fn && typeof fn.arguments === "string" && fn.arguments) frag.arguments = fn.arguments;
+    if (frag.id || frag.name || frag.arguments) out.push(frag);
+  }
+  return out;
+}
+
 /**
  * Extract visible text pieces from an OpenAI-compatible delta (or choice.text).
  * Counts content + reasoning / reasoning_content so thinking models stay "alive".
  * Separates answer (`content`/`text`) from reasoning for display styling.
- * @returns {{ answer: string, reasoning: string, tokenChunks: number }}
+ * Tool-call fragments are included so a tool-only chunk still reaches onDelta.
+ * @returns {{ answer: string, reasoning: string, tokenChunks: number, toolCalls: { index: number, id?: string, name?: string, arguments?: string }[] }}
  */
 function extractDeltaPieces(choice) {
   let answer = "";
@@ -271,6 +291,7 @@ function extractDeltaPieces(choice) {
   let tokenChunks = 0;
 
   const delta = choice?.delta;
+  const toolCalls = extractToolCallFragments(delta);
   if (delta && typeof delta === "object") {
     if (typeof delta.content === "string" && delta.content.length > 0) {
       answer = delta.content;
@@ -287,6 +308,10 @@ function extractDeltaPieces(choice) {
       reasoning = delta.reasoning_content;
       tokenChunks += estimateTokenCount(delta.reasoning_content);
     }
+    for (const frag of toolCalls) {
+      const blob = `${frag.name || ""}${frag.arguments || ""}`;
+      if (blob) tokenChunks += estimateTokenCount(blob);
+    }
   }
 
   // Non-delta fallbacks (some backends)
@@ -295,7 +320,7 @@ function extractDeltaPieces(choice) {
     tokenChunks = estimateTokenCount(choice.text);
   }
 
-  return { answer, reasoning, tokenChunks };
+  return { answer, reasoning, tokenChunks, toolCalls };
 }
 
 /** Coerce a request/session thinking flag. Default is off (matches Showcase UI). */
@@ -455,7 +480,8 @@ export async function pollServerGenerationRates(
  * Options:
  * - debug: capture compact HTTP/SSE debug trace
  * - collectContent: accumulate full visible text (showcase)
- * - onDelta: live callback `{ text?, answer?, reasoning?, tokenCount, tFirst, tLast, … }`
+ * - onDelta: live callback `{ text?, answer?, reasoning?, toolCalls?, tokenCount, tFirst, tLast, … }`
+ * - onEvent: each parsed SSE JSON object, before token accounting (playground parser)
  * - retryOnThinking400: if HTTP 400 and thinking was *enabled*, retry once stripped
  *   (non-reasoning models). When thinking is off, retry with a smaller disable
  *   payload instead of stripping — stripping lets hybrid models think by default.
@@ -470,6 +496,7 @@ export async function runStreamingRequest(
     debug = false,
     collectContent = false,
     onDelta = null,
+    onEvent = null,
     retryOnThinking400 = false,
     thinking = false,
     apiKey = null,
@@ -479,6 +506,7 @@ export async function runStreamingRequest(
     debug,
     collectContent,
     onDelta,
+    onEvent,
     apiKey,
   });
 
@@ -501,6 +529,7 @@ export async function runStreamingRequest(
       debug,
       collectContent,
       onDelta,
+      onEvent,
       apiKey,
     });
   }
@@ -512,13 +541,13 @@ export async function runStreamingRequest(
  * @param {string} url
  * @param {Record<string, unknown>} body
  * @param {AbortSignal} signal
- * @param {{ debug?: boolean, collectContent?: boolean, onDelta?: Function | null, apiKey?: string | null }} opts
+ * @param {{ debug?: boolean, collectContent?: boolean, onDelta?: Function | null, onEvent?: Function | null, apiKey?: string | null }} opts
  */
 async function runStreamingRequestOnce(
   url,
   body,
   signal,
-  { debug = false, collectContent = false, onDelta = null, apiKey = null } = {}
+  { debug = false, collectContent = false, onDelta = null, onEvent = null, apiKey = null } = {}
 ) {
   const t0 = performance.now();
   /** @type {number | null} */
@@ -556,6 +585,7 @@ async function runStreamingRequestOnce(
   let firstSseDataPreview = null;
   const keepContent = Boolean(debug || collectContent);
   const deltaCb = typeof onDelta === "function" ? onDelta : null;
+  const eventCb = typeof onEvent === "function" ? onEvent : null;
 
   try {
     /** @type {Record<string, string>} */
@@ -622,6 +652,14 @@ async function runStreamingRequestOnce(
             continue;
           }
 
+          if (eventCb) {
+            try {
+              eventCb(json);
+            } catch {
+              /* non-fatal */
+            }
+          }
+
           if (debug && json.id && !completionId) completionId = String(json.id);
           if (json.model) model = json.model;
           if (json.usage && typeof json.usage === "object") {
@@ -655,17 +693,20 @@ async function runStreamingRequestOnce(
           const choice = json.choices?.[0];
           if (debug && choice?.finish_reason) finishReason = String(choice.finish_reason);
 
-          const { answer, reasoning, tokenChunks } = extractDeltaPieces(choice);
-          if (tokenChunks > 0) {
+          const { answer, reasoning, tokenChunks, toolCalls } = extractDeltaPieces(choice);
+          if (tokenChunks > 0 || toolCalls.length > 0) {
             const now = performance.now();
-            if (tFirst == null) tFirst = now;
-            tLast = now;
-            if (reasoning) {
-              reasoningChunkCount += 1;
-            } else if (tFirstContent == null) {
-              tFirstContent = now;
+            if (tokenChunks > 0) {
+              if (tFirst == null) tFirst = now;
+              tLast = now;
+              // Tool-call argument text is not an answer, so it does not start ttftContentMs.
+              if (reasoning) {
+                reasoningChunkCount += 1;
+              } else if (answer && tFirstContent == null) {
+                tFirstContent = now;
+              }
+              chunkTokenCount += tokenChunks;
             }
-            chunkTokenCount += tokenChunks;
             const text = `${reasoning}${answer}`;
             if (keepContent) {
               if (reasoning) reasoningContent += reasoning;
@@ -678,6 +719,7 @@ async function runStreamingRequestOnce(
                   text: text || undefined,
                   answer: answer || undefined,
                   reasoning: reasoning || undefined,
+                  toolCalls: toolCalls.length ? toolCalls : undefined,
                   tokenCount: chunkTokenCount,
                   tFirst,
                   tLast,

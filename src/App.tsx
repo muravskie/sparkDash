@@ -17,6 +17,9 @@ import { HermesUpdateDialog } from "./components/SparkPage/HermesUpdateDialog";
 import { OverviewPage } from "./components/OverviewPage/OverviewPage";
 import { ShowcasePage } from "./components/ShowcasePage/ShowcasePage";
 import { ShowcaseView } from "./components/ShowcasePage/ShowcaseView";
+import { PlaygroundPage } from "./components/playground/PlaygroundPage";
+import { ModelsPage } from "./components/models/ModelsPage";
+import { AgentPage } from "./components/agent/AgentPage";
 import { ThemeSwitch } from "./components/ThemeSwitch";
 import { SettingsDialog } from "./components/SettingsDialog";
 import {
@@ -32,12 +35,18 @@ import {
   ListIcon,
   PanelLeftIcon,
   TokensIcon,
+  BotIcon,
+  MemoryIcon,
+  CpuIcon,
 } from "./components/ui/icons";
 import { ConnectionBanner } from "./components/ui/ConnectionBanner";
 import { ErrorBanner } from "./components/ui/ErrorBanner";
 import {
   ACTIVITY_ID,
   SHOWCASE_ID,
+  PLAYGROUND_ID,
+  MODELS_ID,
+  AGENT_ID,
   ENERGY_ID,
   OVERVIEW_ID,
   TOKENS_ID,
@@ -441,6 +450,9 @@ function DashboardApp() {
       { id: "nav:tokens", group: "Go to", label: "Token totals", hint: "Page", icon: <TokensIcon className="h-4 w-4" />, keywords: "llm tokens generated prompt cached usage", run: () => navigate(TOKENS_ID) },
       { id: "nav:energy", group: "Go to", label: "Fleet energy", hint: "Page", icon: <BoltIcon className="h-4 w-4" />, keywords: "power kwh watts cost electricity", run: () => navigate(ENERGY_ID) },
       { id: "nav:showcase", group: "Go to", label: "Showcase", hint: "Page", icon: <TerminalIcon className="h-4 w-4" />, keywords: "prompts terminals stream demo", run: () => navigate(SHOWCASE_ID) },
+      { id: "nav:playground", group: "Go to", label: "Playground", hint: "Page", icon: <BotIcon className="h-4 w-4" />, keywords: "chat playground sampling tools", run: () => navigate(PLAYGROUND_ID) },
+      { id: "nav:models", group: "Go to", label: "Models", hint: "Page", icon: <MemoryIcon className="h-4 w-4" />, keywords: "controller activate deactivate lifecycle", run: () => navigate(MODELS_ID) },
+      { id: "nav:agent", group: "Go to", label: "Agent", hint: "Page", icon: <CpuIcon className="h-4 w-4" />, keywords: "opencode agent uba", run: () => navigate(AGENT_ID) },
       { id: "nav:activity", group: "Go to", label: "Activity", hint: "Page", icon: <ListIcon className="h-4 w-4" />, keywords: "events log history recent", run: () => navigate(ACTIVITY_ID) }
     );
     for (const s of displaySparks) {
@@ -547,6 +559,12 @@ function DashboardApp() {
                 <ActivityPage sparks={displaySparks} onSelectSpark={navigate} />
               ) : activeId === SHOWCASE_ID ? (
                 <ShowcaseView sparks={displaySparks} />
+              ) : activeId === PLAYGROUND_ID ? (
+                <PlaygroundPage sparks={displaySparks} />
+              ) : activeId === MODELS_ID ? (
+                <ModelsPage sparks={displaySparks} />
+              ) : activeId === AGENT_ID ? (
+                <AgentPage />
               ) : benchType ? (
                 <BenchPage type={benchType} sparks={displaySparks} benchShareImage={settings?.benchShareImage ?? false} />
               ) : isOverview ? (

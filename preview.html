@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; worker-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>HTML preview · Spark</title>
+  <style>
+    html,body{height:100%;margin:0;background:#fff}
+    body{display:flex;flex-direction:column}
+    header{padding:10px 16px;font:13px system-ui,sans-serif;background:#1c242d;color:#e5ebf3;display:flex;justify-content:space-between;gap:16px}
+    header span{color:#abb8c8}
+    #status{padding:20px;font:16px system-ui,sans-serif;color:#20252c}
+    iframe{flex:1;border:0;width:100%;min-height:0}
+  </style>
+</head>
+<body>
+  <header>HTML preview<span>Inline JavaScript enabled · External requests blocked</span></header>
+  <p id="status" role="status">Loading preview…</p>
+  <iframe hidden title="Generated HTML preview" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+  <script type="module" src="/src/components/playground/lit/preview-page.ts"></script>
+</body>
+</html>

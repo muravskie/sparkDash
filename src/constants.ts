@@ -5,6 +5,9 @@ export const TOKENS_ID = "__tokens__";
 export const ENERGY_ID = "__energy__";
 export const ACTIVITY_ID = "__activity__";
 export const SHOWCASE_ID = "__showcase__";
+export const PLAYGROUND_ID = "__playground__";
+export const MODELS_ID = "__models__";
+export const AGENT_ID = "__agent__";
 /** Benchmark pages: the active id is this prefix + the benchmark type (decode, tool-eval, …). */
 export const BENCH_PREFIX = "__bench__:";
 
@@ -14,6 +17,9 @@ const FIXED_PATHS: Record<string, string> = {
   [ENERGY_ID]: "/energy",
   [ACTIVITY_ID]: "/activity",
   [SHOWCASE_ID]: "/showcase",
+  [PLAYGROUND_ID]: "/playground",
+  [MODELS_ID]: "/models",
+  [AGENT_ID]: "/agent",
 };
 
 export function benchId(type: string): string {

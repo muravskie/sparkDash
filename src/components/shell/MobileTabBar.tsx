@@ -4,9 +4,9 @@ import { createPortal } from "react-dom";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { useInertBackground } from "../../hooks/useInertBackground";
 import type { SparkSnapshot } from "../../api/types";
-import { ACTIVITY_ID, ENERGY_ID, OVERVIEW_ID, SHOWCASE_ID, TOKENS_ID, benchId, benchTypeOf, isPageId } from "../../constants";
+import { ACTIVITY_ID, AGENT_ID, ENERGY_ID, MODELS_ID, OVERVIEW_ID, PLAYGROUND_ID, SHOWCASE_ID, TOKENS_ID, benchId, benchTypeOf, isPageId } from "../../constants";
 import { BENCH_TYPES } from "../bench/benchCatalog";
-import { BoltIcon, ChartIcon, GearIcon, GridIcon, ListIcon, PlusIcon, ServerIcon, TerminalIcon, TokensIcon } from "../ui/icons";
+import { BoltIcon, ChartIcon, CpuIcon, GearIcon, GridIcon, ListIcon, MemoryIcon, PlusIcon, ServerIcon, TerminalIcon, TokensIcon, BotIcon } from "../ui/icons";
 import { isThrottling, railSubLabel } from "./sparkSummary";
 import { ShutdownAll } from "../ShutdownAll";
 
@@ -62,7 +62,13 @@ export function MobileTabBar({ sparks, activeId, onSelect, onAdd, onOpenSettings
   // Which tab the sliding highlight sits under (-1 hides it, e.g. while on a Settings dialog).
   const statsActive = activeId === TOKENS_ID || activeId === ENERGY_ID || activeId === ACTIVITY_ID;
   const tabIndex =
-    sheetKind === "sparks" ? 1 : sheetKind === "stats" ? 2 : activeId === OVERVIEW_ID ? 0 : onSpark ? 1 : statsActive ? 2 : -1;
+    sheetKind === "sparks" ? 1
+    : sheetKind === "stats" ? 3
+    : activeId === OVERVIEW_ID ? 0
+    : onSpark ? 1
+    : activeId === PLAYGROUND_ID ? 2
+    : statsActive ? 3
+    : -1;
   const pageButton = (id: string, label: string, icon: ReactNode, compact = false) => (
     <button
       key={id}
@@ -91,6 +97,18 @@ export function MobileTabBar({ sparks, activeId, onSelect, onAdd, onOpenSettings
         <button
           type="button"
           className={tabIndex === 2 ? "is-active" : ""}
+          aria-current={activeId === PLAYGROUND_ID ? "page" : undefined}
+          onClick={() => {
+            setSheet(false);
+            onSelect(PLAYGROUND_ID);
+          }}
+        >
+          <BotIcon className="h-[18px] w-[18px]" />
+          Playground
+        </button>
+        <button
+          type="button"
+          className={tabIndex === 3 ? "is-active" : ""}
           aria-current={activeId === TOKENS_ID || activeId === ENERGY_ID || activeId === ACTIVITY_ID ? "page" : undefined}
           onClick={() => openSheet("stats")}
           aria-haspopup="dialog"
@@ -137,9 +155,13 @@ export function MobileTabBar({ sparks, activeId, onSelect, onAdd, onOpenSettings
                         <BenchIcon id={b.id} className="h-3.5 w-3.5" />
                         <span className="rail-item__name">{b.label}</span>
                       </button>
-                      {b.id === "prefill"
-                        ? pageButton(SHOWCASE_ID, "Showcase", <TerminalIcon className="h-3.5 w-3.5" />, true)
-                        : null}
+                      {b.id === "prefill" ? (
+                        <>
+                          {pageButton(SHOWCASE_ID, "Showcase", <TerminalIcon className="h-3.5 w-3.5" />, true)}
+                          {pageButton(MODELS_ID, "Models", <MemoryIcon className="h-3.5 w-3.5" />, true)}
+                          {pageButton(AGENT_ID, "Agent", <CpuIcon className="h-3.5 w-3.5" />, true)}
+                        </>
+                      ) : null}
                     </Fragment>
                   ))}
                   <div className="rail-label rail-label--spaced">

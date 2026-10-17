@@ -2,6 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import os from "node:os";
 
+/** HttpOnly cookie that carries the dashboard token for the OpenCode proxy only. */
+export const AGENT_PROXY_COOKIE = "sparkdash_agent";
+
 export function configuredToken() {
   const token = process.env.SPARKDASH_TOKEN || process.env.DASHBOARD_TOKEN || "";
   return token.trim();
@@ -128,10 +131,49 @@ function queryTokenFromUrl(url) {
   }
 }
 
-export function authenticate(req) {
+function requestPath(req) {
+  const candidates = [req?.originalUrl, req?.url, req?.path];
+  let fallback = "";
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate) continue;
+    const query = candidate.indexOf("?");
+    const path = query === -1 ? candidate : candidate.slice(0, query);
+    if (path === "/agent/proxy" || path.startsWith("/agent/proxy/")) return path;
+    if (!fallback) fallback = path;
+  }
+  return fallback;
+}
+
+function isAgentProxyPath(req) {
+  const path = requestPath(req);
+  return path === "/agent/proxy" || path.startsWith("/agent/proxy/");
+}
+
+function readCookie(header, name) {
+  if (!header) return "";
+  for (const part of String(header).split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() !== name) continue;
+    let value = part.slice(idx + 1).trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+  return "";
+}
+
+export function authenticate(req, opts = {}) {
   const expected = configuredToken();
   if (!expected) return { ok: true, mode: "open-loopback" };
-  const provided = extractBearer(req);
+  let provided = extractBearer(req);
+  // The OpenCode port cannot see the dashboard's localStorage token. It accepts
+  // the cookie it set itself after a token check. That cookie does not authenticate
+  // the dashboard API.
+  if (!provided && (opts.agentCookie || isAgentProxyPath(req))) provided = readCookie(req.headers?.cookie, AGENT_PROXY_COOKIE);
   if (!provided || !tokensEqual(provided, expected)) {
     return { ok: false, status: 401, error: "Authentication required" };
   }
@@ -168,7 +210,9 @@ export function createAuthMiddleware() {
     // bind they answer without auth (the loopback bind already serves every
     // GET open). API routes and the WebSocket stay token-gated; the app then
     // authenticates its own calls from localStorage (src/api/authToken.ts).
-    if (!mutating && !/^\/(api|ws|metrics)(\/|$)/.test(req.path || "")) return next();
+    // OpenCode is a separate port and does not use this middleware.
+    const path = req.path || "";
+    if (!mutating && !/^\/(api|ws|metrics)(\/|$)/.test(path)) return next();
     const result = authenticate(req);
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     next();
@@ -188,7 +232,7 @@ export function authStatus(req) {
   return { tokenRequired, authenticated: authenticate(req).ok };
 }
 
-export function authorizeUpgrade(req) {
+export function authorizeUpgrade(req, opts = {}) {
   const refused = refusedName(req);
   if (refused) {
     logRefused(refused);
@@ -196,5 +240,5 @@ export function authorizeUpgrade(req) {
   }
   const remote = requireRemoteAuth(process.env.BIND_HOST || "127.0.0.1");
   if (!remote && !configuredToken()) return true;
-  return authenticate(req).ok;
+  return authenticate(req, opts).ok;
 }

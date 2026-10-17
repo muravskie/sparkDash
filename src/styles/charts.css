@@ -83,3 +83,73 @@
   color: var(--color-muted);
   font-size: 11px;
 }
+
+/* Metric overlay: line, 16-bin histogram, mean marker. Colours follow the theme. */
+.metric-overlay-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.metric-overlay {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  --series: var(--color-accent);
+}
+.metric-overlay__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted-strong);
+}
+.metric-overlay__unit {
+  font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-muted);
+}
+.metric-overlay__plot {
+  outline: none;
+  cursor: crosshair;
+  user-select: none;
+}
+.metric-overlay__plot:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.metric-overlay__line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 1.7;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.metric-overlay__dot {
+  fill: var(--series);
+}
+.metric-overlay__crosshair {
+  stroke: var(--color-text);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+}
+.metric-overlay__bar {
+  fill: color-mix(in srgb, var(--color-muted) 28%, transparent);
+}
+.metric-overlay__bar.is-mean {
+  fill: color-mix(in srgb, var(--series) 55%, transparent);
+}
+.metric-overlay__mean-bin {
+  fill: color-mix(in srgb, var(--series) 16%, transparent);
+}
+.metric-overlay__mean {
+  stroke: var(--series);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+}
+.metric-overlay__tip {
+  min-width: 0;
+}

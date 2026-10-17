@@ -402,7 +402,7 @@ body {
   bottom: 0;
   z-index: 30;
   display: none;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--color-border-strong);
   background: var(--color-surface);
@@ -414,6 +414,7 @@ body {
 .tabbar[data-tab="1"] { --tab: 1; }
 .tabbar[data-tab="2"] { --tab: 2; }
 .tabbar[data-tab="3"] { --tab: 3; }
+.tabbar[data-tab="4"] { --tab: 4; }
 /* The highlight is one pill that slides under the active tab, like iOS. */
 .tabbar::before {
   content: "";
@@ -421,7 +422,7 @@ body {
   top: 6px;
   bottom: calc(6px + env(safe-area-inset-bottom, 0px));
   left: 8px;
-  width: calc((100% - 16px) / 4);
+  width: calc((100% - 16px) / 5);
   border-radius: 16px;
   background: var(--color-accent-soft);
   transform: translateX(calc(var(--tab) * 100%));
@@ -437,13 +438,15 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 3px;
+  min-width: 0;
   padding: 7px 0;
   border: 0;
   border-radius: 16px;
   background: none;
   color: var(--color-muted);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 500;
+  white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition: color 0.25s ease, transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);

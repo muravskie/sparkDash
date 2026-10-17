@@ -1,5 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import "../../../styles/benchpages.css";
+import { authHeaders } from "../../../api/authToken";
 import type { LlmBenchTarget, SparkSnapshot } from "../../../api/types";
 import {
   formatLlmBaseUrl,
@@ -9,10 +10,58 @@ import { Tag } from "../../ui/Tag";
 import { PageEmpty } from "./pageParts";
 import { isWorkerSpark } from "../../../api/sparkRole";
 import { SparkChips, useBenchSparks } from "../SparkChips";
+import { ProviderModelMenu } from "./ProviderModelMenu";
 import { useStickyHeight } from "./useStickyHeight";
 
 /** Same key the Spark page's Remote launcher uses, so a typed host carries over. */
 const REMOTE_STORAGE_KEY = "sparkdash.remote-bench-target";
+const OPENCODE_MODEL_KEY = "sparkdash.playground-opencode-go-model";
+
+const PROVIDERS = [
+  { id: "opencode-go", label: "OpenCode Go" },
+  { id: "openrouter", label: "OpenRouter" },
+] as const;
+
+function modelStorageKey(providerId: string) {
+  return providerId === "opencode-go" ? OPENCODE_MODEL_KEY : `sparkdash.playground-${providerId}-model`;
+}
+
+function readStoredModel(providerId: string) {
+  try {
+    return localStorage.getItem(modelStorageKey(providerId)) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberModel(providerId: string, id: string) {
+  if (!id) return;
+  try {
+    localStorage.setItem(modelStorageKey(providerId), id);
+  } catch {
+    /* private mode */
+  }
+}
+
+function providerNote(providerId: string, credential: boolean | null) {
+  if (providerId === "openrouter") {
+    return credential === false
+      ? "OpenRouter API key is not configured on the server, so chat cannot start. Set OPENROUTER_API_KEY."
+      : "Models, features, and per-1M prices come from OpenRouter. Chat uses the API key on the server.";
+  }
+  return credential === false
+    ? "OpenCode Go API key is not configured on the server, so chat cannot start. Set OPENCODE_GO_KEY_FILE to a mode-600 file containing the console API key."
+    : "Models, features, and per-1M prices come from OpenCode Go. Chat uses the subscription key on the server.";
+}
+
+export interface ProviderCatalogModel {
+  id: string;
+  name: string;
+  line: string;
+  features?: string[];
+  context?: string | null;
+  cost: { input: number; output: number; cache_read?: number; cache_write?: number } | null;
+}
 
 function readStoredRemote(): { host: string; port: string; tls: boolean } {
   try {
@@ -46,6 +95,10 @@ export interface BenchTargetProps {
   shareImage: boolean;
   /** Live generation tok/s from the monitor; null for a Remote target. */
   liveTps: number | null;
+  /** Model chosen from a hosted provider. Null on a Spark or a typed host. */
+  providerModel: ProviderCatalogModel | null;
+  /** False when the server has no key for that provider. */
+  providerCredential: boolean | null;
 }
 
 const POSTURE_TONE = { ok: "good", warn: "warn", danger: "bad" } as const;
@@ -57,10 +110,13 @@ const POSTURE_TONE = { ok: "good", warn: "warn", danger: "bad" } as const;
 export function BenchTargetFrame({
   spark,
   benchShareImage = false,
+  remoteForm = "host",
   children,
 }: {
   spark: SparkSnapshot | null;
   benchShareImage?: boolean;
+  /** Playground lists a provider instead of a typed host. Bench pages keep the host. */
+  remoteForm?: "host" | "provider";
   children: (target: BenchTargetProps) => ReactNode;
 }) {
   const benchSparks = useBenchSparks();
@@ -73,6 +129,54 @@ export function BenchTargetFrame({
   const [hostDraft, setHostDraft] = useState(stored.host);
   const [portDraft, setPortDraft] = useState(stored.port);
   const [tls, setTls] = useState(stored.tls);
+  const [providerId, setProviderId] = useState<(typeof PROVIDERS)[number]["id"]>("opencode-go");
+  const [catalog, setCatalog] = useState<ProviderCatalogModel[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [credential, setCredential] = useState<boolean | null>(null);
+  const [modelPick, setModelPick] = useState(() => readStoredModel("opencode-go"));
+
+  useEffect(() => {
+    if (remoteForm !== "provider" || mode !== "remote") return;
+    const ac = new AbortController();
+    const stored = readStoredModel(providerId);
+    setCatalog([]);
+    setCatalogError(null);
+    setCatalogLoading(true);
+    setCredential(null);
+    setModelPick(stored);
+    fetch(`/api/playground/providers/${providerId}/models`, {
+      headers: { ...authHeaders() },
+      signal: ac.signal,
+    })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = body && typeof body === "object" && "error" in body ? body.error : null;
+          throw new Error(typeof detail === "string" ? detail : "Could not list models");
+        }
+        return body as { credential?: boolean; models?: ProviderCatalogModel[] };
+      })
+      .then((body) => {
+        if (ac.signal.aborted) return;
+        const models = Array.isArray(body.models) ? body.models : [];
+        const next = stored && models.some((model) => model.id === stored) ? stored : models[0]?.id || "";
+        setCatalog(models);
+        setCredential(body.credential === true);
+        setModelPick(next);
+        rememberModel(providerId, next);
+      })
+      .catch((err: unknown) => {
+        if (ac.signal.aborted) return;
+        setCatalog([]);
+        setCredential(null);
+        setCatalogError(err instanceof Error ? err.message : "Could not list models");
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setCatalogLoading(false);
+      });
+    return () => ac.abort();
+  }, [remoteForm, mode, providerId]);
 
   const remote = useMemo(() => {
     if (mode !== "remote")
@@ -130,21 +234,30 @@ export function BenchTargetFrame({
   };
 
   const useRemote = mode === "remote";
+  const providerPick = remoteForm === "provider" && useRemote;
+  const selectedProvider = providerPick
+    ? catalog.find((model) => model.id === modelPick) ?? null
+    : null;
   const target: BenchTargetProps = {
     sparkId: spark.id,
     sparkName: spark.name,
     llmPort,
-    modelId: useRemote ? null : (llm?.modelId ?? null),
+    modelId: selectedProvider ? selectedProvider.name : useRemote ? null : (llm?.modelId ?? null),
     contextLength: useRemote ? null : (llm?.contextLength ?? null),
-    remoteTarget: useRemote ? remote.target : null,
-    engine: useRemote ? null : (llm?.backend ?? null),
+    remoteTarget: providerPick ? null : useRemote ? remote.target : null,
+    engine: selectedProvider ? providerId : useRemote ? null : (llm?.backend ?? null),
     posture: useRemote ? null : (llm?.posture ?? null),
     shareImage: benchShareImage,
     liveTps: useRemote ? null : (llm?.generationTps ?? null),
+    providerModel: selectedProvider,
+    providerCredential: selectedProvider ? credential : null,
   };
 
   let notice: ReactNode = null;
-  if (useRemote) {
+  if (providerPick) {
+    if (catalogError) notice = <p className="bench-sheet__error bp-notice">{catalogError}</p>;
+    else if (catalogLoading && !catalog.length) notice = <p className="bp-hint">Loading {PROVIDERS.find((item) => item.id === providerId)?.label ?? "provider"} models…</p>;
+  } else if (useRemote) {
     if (remote.error)
       notice = <p className="bench-sheet__error bp-notice">{remote.error}</p>;
   } else if (!spark.online) {
@@ -192,7 +305,7 @@ export function BenchTargetFrame({
                 className={`bench-runon__chip${useRemote ? " is-on" : ""}`}
                 aria-pressed={useRemote}
                 onClick={() => setMode("remote")}
-                title="Benchmark another LLM endpoint instead of a Spark's"
+                title={remoteForm === "provider" ? "Chat with a hosted provider instead of this Spark" : "Benchmark another LLM endpoint instead of a Spark's"}
               >
                 Remote
               </button>
@@ -240,12 +353,39 @@ export function BenchTargetFrame({
                 </Tag>
               ) : null}
             </>
+          ) : selectedProvider ? (
+            <Tag tone="acc">{selectedProvider.name}</Tag>
           ) : remote.target ? (
             <Tag tone="acc">{formatLlmBaseUrl(remote.target)}</Tag>
           ) : null}
         </div>
 
-        {useRemote ? (
+        {providerPick ? (
+          <div className="bp-remote">
+            <label className="bp-field">
+              <span className="eyebrow">Provider</span>
+              <select
+                aria-label="Provider"
+                value={providerId}
+                onChange={(e) => setProviderId(e.target.value as (typeof PROVIDERS)[number]["id"])}
+              >
+                {PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.label}</option>
+                ))}
+              </select>
+            </label>
+            <ProviderModelMenu
+              models={catalog}
+              value={modelPick}
+              label={`${PROVIDERS.find((item) => item.id === providerId)?.label ?? "Provider"} models`}
+              onChange={(id) => {
+                setModelPick(id);
+                rememberModel(providerId, id);
+              }}
+            />
+            <p className="bp-hint">{providerNote(providerId, credential)}</p>
+          </div>
+        ) : useRemote ? (
           <div className="bp-remote">
             <label className="bp-field bp-field--grow">
               <span className="eyebrow">Host</span>
@@ -305,7 +445,7 @@ export function BenchTargetFrame({
       </section>
 
       <div ref={bodyRef}>
-        {useRemote && !remote.target ? (
+        {(providerPick ? !selectedProvider : useRemote && !remote.target) ? (
           // No valid host yet: show the page as it will look, but inert, so nothing can run against
           // this Spark's own port by mistake.
           <div
@@ -318,7 +458,7 @@ export function BenchTargetFrame({
           </div>
         ) : (
           <div
-            key={`${spark.id}:${useRemote ? `remote:${committedRemote}` : llmPort}`}
+            key={`${spark.id}:${selectedProvider ? `provider:${selectedProvider.id}` : useRemote ? `remote:${committedRemote}` : llmPort}`}
           >
             {children(target)}
           </div>
