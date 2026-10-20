@@ -95,7 +95,7 @@ describe("PlaygroundPage", () => {
       container.querySelector<HTMLButtonElement>("[aria-label='Model']")?.click();
     });
     const headers = [...container.querySelectorAll(".bp-model-table th")].map((cell) => cell.textContent);
-    expect(headers.slice(0, 7)).toEqual(["Model", "Features", "Context", "In", "Out", "Cache", "Write"]);
+    expect(headers.slice(0, 8)).toEqual(["Model", "Features", "Context", "In", "Out", "Cache", "Write", "Go $10"]);
     const row = container.querySelector(".bp-model-table tbody tr");
     expect(row?.textContent).toContain("tools, reasoning");
     expect(row?.textContent).toContain("1M");
@@ -105,6 +105,67 @@ describe("PlaygroundPage", () => {
     expect(container.querySelector("[aria-label='Remote host']")).toBeNull();
     expect((container.querySelector("[aria-label='Provider']") as HTMLSelectElement).value).toBe("opencode-go");
     expect(container.querySelector("[aria-label='Filter models']")).toBeTruthy();
+    expect(container.querySelector("[aria-label='Reload models']")).toBeTruthy();
+    const fetchMock = vi.mocked(fetch);
+    const before = fetchMock.mock.calls.length;
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[aria-label='Reload models']")?.click();
+    });
+    await vi.waitFor(() => {
+      const urls = fetchMock.mock.calls.slice(before).map((call) => String(call[0]));
+      expect(urls.some((url) => url.includes("/providers/opencode-go/models?refresh=1"))).toBe(true);
+    });
+  });
+
+  it("lists DeepSeek V4.1 Flash Free under the OpenCode provider", async () => {
+    localStorage.removeItem("sparkdash.playground-opencode-model");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const path = String(url);
+        if (path.includes("/providers/opencode/models")) {
+          return {
+            ok: true,
+            json: async () => ({
+              credential: true,
+              models: [{
+                id: "deepseek-v4.1-flash-free",
+                name: "DeepSeek V4.1 Flash Free",
+                line: "DeepSeek V4.1 Flash Free · free",
+                features: ["reasoning"],
+                context: "200K",
+                cost: { input: 0, output: 0 },
+              }],
+            }),
+          };
+        }
+        if (path.includes("/providers/opencode-go/models")) {
+          return {
+            ok: true,
+            json: async () => ({
+              credential: true,
+              models: [{ id: "glm-5.3-flash", name: "GLM-5.3-Flash", line: "GLM", features: [], context: null, cost: null }],
+            }),
+          };
+        }
+        return { ok: true, json: async () => defaults };
+      })
+    );
+    const { container } = render(<PlaygroundPage sparks={[makeSpark("a")]} />);
+    const remote = [...container.querySelectorAll("button")].find((button) => button.textContent === "Remote");
+    await act(async () => { remote?.click(); });
+    await vi.waitFor(() => {
+      expect(container.querySelector("[aria-label='Provider']")).toBeTruthy();
+    });
+    const select = container.querySelector("[aria-label='Provider']") as HTMLSelectElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "opencode");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await vi.waitFor(() => {
+      expect(container.querySelector("[aria-label='Model']")?.textContent).toContain("DeepSeek V4.1 Flash Free");
+    });
+    expect(container.textContent).toContain("sent through the OpenCode CLI");
   });
 
   it("lists OpenRouter models when that provider is selected", async () => {

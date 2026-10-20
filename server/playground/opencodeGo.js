@@ -18,12 +18,15 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { Agent } from "undici";
 import { goProtocol, proxyAdaptedGoStream } from "./goProtocols.js";
+import { isOpencodeFreeTier, streamOpencodeCli } from "./opencodeCli.js";
 import { chatPayload, proxyChatStream } from "./passthrough.js";
 
 export const OPENCODE_GO_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
+export const OPENCODE_MODELS_URL = "https://opencode.ai/zen/v1/models";
 export const OPENCODE_GO_CATALOG_URL = "https://models.dev/api.json";
 export const OPENCODE_GO_USER_AGENT = "sparkdash/1.0";
 const DEFAULT_BASE = "https://opencode.ai/inference/go";
+const OPENCODE_BASE = "https://opencode.ai/inference/openai";
 const CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,128}$/;
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,128}$/;
@@ -33,8 +36,8 @@ const goDispatcher = new Agent({
   bodyTimeout: 0,
 });
 
-/** @type {{ at: number, models: object[] } | null} */
-let catalogCache = null;
+/** @type {Record<string, { at: number, models: object[] } | null>} */
+const catalogCaches = { "opencode-go": null, opencode: null };
 
 /**
  * @param {string} value
@@ -332,6 +335,53 @@ export function priceLabel(cost) {
 }
 
 /**
+ * Monthly usage included with the $10 Go plan, from https://opencode.ai/go.
+ * Infinity is an unlimited free model. Ids absent from that table stay unset.
+ * @type {Record<string, number>}
+ */
+export const GO_PLAN_ALLOWANCE = {
+  "glm-5.3-flash": 60,
+  "glm-5.3": 15,
+  "glm-5.2": 60,
+  "kimi-k3": 15,
+  "kimi-k2.7-code": 60,
+  "longcat-2.0": 60,
+  "longcat-2.5-preview-free": Infinity,
+  "step-5-preview": 60,
+  "beam-free": Infinity,
+  "mimo-v2.6-flash": 60,
+  "mimo-v2.6-pro": 15,
+  "mimo-v2.5": 60,
+  "mimo-v2.5-pro": 15,
+  "minimax-m3.1-flash-free": Infinity,
+  "minimax-m3": 60,
+  "muse-spark-1.3-contributor": 60,
+  "muse-spark-1.2-contributor": 60,
+  "qwen3.8-max": 15,
+  "qwen3.8-flash": 30,
+  "qwen3.7-plus": 60,
+  "deepseek-v4.1-flash": 80,
+  "deepseek-v4-pro": 15,
+  "hy4-preview": 30,
+  hy3: 60,
+  "grok-4.7": 15,
+  "gpt-6-luna": 15,
+  "gpt-5.6-luna": 15,
+  "claude-haiku-5-5": 15,
+  "gemini-4-argon-contributor": 60,
+};
+
+/**
+ * @param {string} id
+ * @returns {string | null}
+ */
+export function goAllowanceLabel(id) {
+  if (!Object.prototype.hasOwnProperty.call(GO_PLAN_ALLOWANCE, id)) return null;
+  const amount = GO_PLAN_ALLOWANCE[id];
+  return Number.isFinite(amount) ? `$${amount}` : "Unlimited";
+}
+
+/**
  * @param {string} id
  * @param {object} info
  */
@@ -370,7 +420,11 @@ export function buildOpencodeGoCatalog(live, metadata) {
 }
 
 export function clearOpencodeGoCache() {
-  catalogCache = null;
+  catalogCaches["opencode-go"] = null;
+}
+
+export function clearOpencodeCache() {
+  catalogCaches.opencode = null;
 }
 
 /**
@@ -382,20 +436,29 @@ export function opencodeGoBase(env = process.env) {
 }
 
 /**
- * @param {{ fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv, io?: typeof fs, now?: number }} [opts]
+ * Live ids win. Names and prices come from one provider inside models.dev.
+ *
+ * @param {{
+ *   provider: "opencode-go" | "opencode",
+ *   modelsUrl: string,
+ *   catalogKey: string,
+ *   unavailable: string,
+ * }} spec
+ * @param {{ fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv, io?: typeof fs, now?: number, refresh?: boolean, cacheSlot?: { value: { at: number, models: object[] } | null } }} [opts]
  */
-export async function loadOpencodeGoCatalog(opts = {}) {
+async function loadHostedCatalog(spec, opts = {}) {
   const env = opts.env || process.env;
   const io = opts.io || fs;
   const now = opts.now || Date.now();
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
-  let models = catalogCache && now - catalogCache.at < CACHE_MS ? catalogCache.models : null;
+  const cached = opts.cacheSlot ? opts.cacheSlot.value : catalogCaches[spec.provider];
+  let models = !opts.refresh && cached && now >= cached.at && now - cached.at < CACHE_MS ? cached.models : null;
   if (!models) {
-    const liveRes = await fetchImpl(OPENCODE_GO_MODELS_URL, {
+    const liveRes = await fetchImpl(spec.modelsUrl, {
       headers: { Accept: "application/json", "User-Agent": OPENCODE_GO_USER_AGENT },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!liveRes.ok) throw fail("OpenCode Go model list is unavailable", 502);
+    if (!liveRes.ok) throw fail(spec.unavailable, 502);
     const live = await liveRes.json();
     /** @type {Record<string, object>} */
     let metadata = {};
@@ -406,21 +469,61 @@ export async function loadOpencodeGoCatalog(opts = {}) {
       });
       if (catalogRes.ok) {
         const catalog = await catalogRes.json();
-        const modelsById = catalog?.["opencode-go"]?.models;
+        const modelsById = catalog?.[spec.catalogKey]?.models;
         if (modelsById && typeof modelsById === "object") metadata = modelsById;
       }
     } catch {
       metadata = {};
     }
     models = buildOpencodeGoCatalog(live, metadata);
-    if (!opts.fetchImpl) catalogCache = { at: now, models };
+    if (spec.provider === "opencode-go") {
+      for (const row of models) row.allowance = goAllowanceLabel(row.id);
+    }
+    const entry = { at: now, models };
+    if (opts.cacheSlot) opts.cacheSlot.value = entry;
+    else if (!opts.fetchImpl) catalogCaches[spec.provider] = entry;
   }
   const key = loadOpencodeGoKey(env, io);
   return {
-    provider: "opencode-go",
+    provider: spec.provider,
     credential: Boolean(key.key),
     models,
   };
+}
+
+/**
+ * @param {{ fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv, io?: typeof fs, now?: number, refresh?: boolean, cacheSlot?: { value: { at: number, models: object[] } | null } }} [opts]
+ */
+export function loadOpencodeGoCatalog(opts = {}) {
+  return loadHostedCatalog({
+    provider: "opencode-go",
+    modelsUrl: OPENCODE_GO_MODELS_URL,
+    catalogKey: "opencode-go",
+    unavailable: "OpenCode Go model list is unavailable",
+  }, opts);
+}
+
+/**
+ * The OpenCode provider, the list behind /models. DeepSeek V4.1 Flash Free
+ * is here. It is not on the Go gateway.
+ *
+ * @param {{ fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv, io?: typeof fs, now?: number, refresh?: boolean, cacheSlot?: { value: { at: number, models: object[] } | null } }} [opts]
+ */
+export function loadOpencodeCatalog(opts = {}) {
+  return loadHostedCatalog({
+    provider: "opencode",
+    modelsUrl: OPENCODE_MODELS_URL,
+    catalogKey: "opencode",
+    unavailable: "OpenCode model list is unavailable",
+  }, opts);
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function opencodeBase(env = process.env) {
+  const configured = clean(env.OPENCODE_BASE_URL);
+  return (configured || OPENCODE_BASE).replace(/\/$/, "");
 }
 
 /**
@@ -479,4 +582,44 @@ export async function handleOpencodeGoStream(opts) {
     return;
   }
   await proxyAdaptedGoStream(stream);
+}
+
+/**
+ * Chat for the OpenCode provider. Free-tier ids go through the OpenCode CLI.
+ * Paid models use the HTTP API and the console key.
+ *
+ * @param {{
+ *   res: import("express").Response,
+ *   body: object,
+ *   signal: AbortSignal,
+ *   env?: NodeJS.ProcessEnv,
+ *   io?: typeof fs,
+ * }} opts
+ */
+export async function handleOpencodeStream(opts) {
+  const env = opts.env || process.env;
+  const modelId = typeof opts.body?.modelId === "string" ? opts.body.modelId.trim() : "";
+  if (!MODEL_ID.test(modelId)) throw fail("Choose an OpenCode model", 400);
+  if (isOpencodeFreeTier(modelId, catalogCaches.opencode?.models)) {
+    await streamOpencodeCli({ res: opts.res, modelId, body: opts.body, signal: opts.signal, env });
+    return;
+  }
+  const loaded = loadOpencodeGoKey(env, opts.io || fs);
+  if (!loaded.key) throw fail(loaded.error || "OpenCode API key is not configured", 503);
+  const sessionId = typeof opts.body?.sessionId === "string" ? opts.body.sessionId.trim() : "";
+  if (!SESSION_ID.test(sessionId)) throw fail("OpenCode requires a conversation session", 400);
+  await proxyChatStream({
+    res: opts.res,
+    baseUrl: opencodeBase(env),
+    apiKey: loaded.key,
+    modelId,
+    body: goChatBody(opts.body),
+    signal: opts.signal,
+    extraHeaders: {
+      "User-Agent": OPENCODE_GO_USER_AGENT,
+      "x-opencode-session": sessionId,
+    },
+    dispatcher: goDispatcher,
+    engine: null,
+  });
 }

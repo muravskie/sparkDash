@@ -8,7 +8,7 @@ import { runStreamingRequest } from "../collectors/LlmStreaming.js";
 import { emptyTurn, reduceStreamDelta } from "./deltas.js";
 import { readEngineContext } from "./engineInfo.js";
 import { loadGenerationDefaults } from "./generationDefaults.js";
-import { handleOpencodeGoStream, loadOpencodeGoCatalog } from "./opencodeGo.js";
+import { handleOpencodeGoStream, handleOpencodeStream, loadOpencodeCatalog, loadOpencodeGoCatalog } from "./opencodeGo.js";
 import { handleOpenRouterStream, loadOpenRouterCatalog } from "./openrouter.js";
 import { proxyChatStream } from "./passthrough.js";
 import { buildChatBody, messagesForReplay, parseConcurrency } from "./requestBody.js";
@@ -183,17 +183,25 @@ function fail(res, status, message) {
  * }} deps
  */
 export function registerPlaygroundRoutes(app, deps) {
-  app.get("/api/playground/providers/opencode-go/models", async (_req, res) => {
+  app.get("/api/playground/providers/opencode-go/models", async (req, res) => {
     try {
-      res.json(await loadOpencodeGoCatalog());
+      res.json(await loadOpencodeGoCatalog({ refresh: req.query.refresh === "1" }));
     } catch (err) {
       fail(res, err.status || 502, err.message || "Could not list OpenCode Go models");
     }
   });
 
-  app.get("/api/playground/providers/openrouter/models", async (_req, res) => {
+  app.get("/api/playground/providers/opencode/models", async (req, res) => {
     try {
-      res.json(await loadOpenRouterCatalog());
+      res.json(await loadOpencodeCatalog({ refresh: req.query.refresh === "1" }));
+    } catch (err) {
+      fail(res, err.status || 502, err.message || "Could not list OpenCode models");
+    }
+  });
+
+  app.get("/api/playground/providers/openrouter/models", async (req, res) => {
+    try {
+      res.json(await loadOpenRouterCatalog({ refresh: req.query.refresh === "1" }));
     } catch (err) {
       fail(res, err.status || 502, err.message || "Could not list OpenRouter models");
     }
@@ -260,9 +268,11 @@ export function registerPlaygroundRoutes(app, deps) {
     const payload = req.body && typeof req.body === "object" ? req.body : {};
     const hosted = payload.provider === "opencode-go"
       ? handleOpencodeGoStream
-      : payload.provider === "openrouter"
-        ? handleOpenRouterStream
-        : null;
+      : payload.provider === "opencode"
+        ? handleOpencodeStream
+        : payload.provider === "openrouter"
+          ? handleOpenRouterStream
+          : null;
     if (hosted) {
       const ac = disconnectController(res);
       try {

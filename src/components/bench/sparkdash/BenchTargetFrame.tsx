@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "../../../styles/benchpages.css";
 import { authHeaders } from "../../../api/authToken";
 import type { LlmBenchTarget, SparkSnapshot } from "../../../api/types";
@@ -19,6 +19,7 @@ const OPENCODE_MODEL_KEY = "sparkdash.playground-opencode-go-model";
 
 const PROVIDERS = [
   { id: "opencode-go", label: "OpenCode Go" },
+  { id: "opencode", label: "OpenCode" },
   { id: "openrouter", label: "OpenRouter" },
 ] as const;
 
@@ -49,6 +50,11 @@ function providerNote(providerId: string, credential: boolean | null) {
       ? "OpenRouter API key is not configured on the server, so chat cannot start. Set OPENROUTER_API_KEY."
       : "Models, features, and per-1M prices come from OpenRouter. Chat uses the API key on the server.";
   }
+  if (providerId === "opencode") {
+    return credential === false
+      ? "OpenCode API key is not configured on the server, so chat cannot start. Set OPENCODE_GO_KEY_FILE to a mode-600 file containing the console API key."
+      : "Models come from OpenCode. Free models, including DeepSeek V4.1 Flash Free, are sent through the OpenCode CLI. Paid models use the API key on the server.";
+  }
   return credential === false
     ? "OpenCode Go API key is not configured on the server, so chat cannot start. Set OPENCODE_GO_KEY_FILE to a mode-600 file containing the console API key."
     : "Models, features, and per-1M prices come from OpenCode Go. Chat uses the subscription key on the server.";
@@ -61,6 +67,8 @@ export interface ProviderCatalogModel {
   features?: string[];
   context?: string | null;
   cost: { input: number; output: number; cache_read?: number; cache_write?: number } | null;
+  /** Monthly usage included with the $10 Go plan, for example "$80" or "Unlimited". */
+  allowance?: string | null;
 }
 
 function readStoredRemote(): { host: string; port: string; tls: boolean } {
@@ -135,17 +143,22 @@ export function BenchTargetFrame({
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [credential, setCredential] = useState<boolean | null>(null);
   const [modelPick, setModelPick] = useState(() => readStoredModel("opencode-go"));
+  const catalogAbort = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (remoteForm !== "provider" || mode !== "remote") return;
+  const loadProviderCatalog = useCallback((refresh: boolean) => {
+    catalogAbort.current?.abort();
     const ac = new AbortController();
+    catalogAbort.current = ac;
     const stored = readStoredModel(providerId);
-    setCatalog([]);
+    if (!refresh) {
+      setCatalog([]);
+      setCredential(null);
+      setModelPick(stored);
+    }
     setCatalogError(null);
     setCatalogLoading(true);
-    setCredential(null);
-    setModelPick(stored);
-    fetch(`/api/playground/providers/${providerId}/models`, {
+    const query = refresh ? "?refresh=1" : "";
+    fetch(`/api/playground/providers/${providerId}/models${query}`, {
       headers: { ...authHeaders() },
       signal: ac.signal,
     })
@@ -168,15 +181,22 @@ export function BenchTargetFrame({
       })
       .catch((err: unknown) => {
         if (ac.signal.aborted) return;
-        setCatalog([]);
-        setCredential(null);
+        if (!refresh) {
+          setCatalog([]);
+          setCredential(null);
+        }
         setCatalogError(err instanceof Error ? err.message : "Could not list models");
       })
       .finally(() => {
         if (!ac.signal.aborted) setCatalogLoading(false);
       });
-    return () => ac.abort();
-  }, [remoteForm, mode, providerId]);
+  }, [providerId]);
+
+  useEffect(() => {
+    if (remoteForm !== "provider" || mode !== "remote") return;
+    loadProviderCatalog(false);
+    return () => catalogAbort.current?.abort();
+  }, [remoteForm, mode, providerId, loadProviderCatalog]);
 
   const remote = useMemo(() => {
     if (mode !== "remote")
@@ -377,7 +397,10 @@ export function BenchTargetFrame({
             <ProviderModelMenu
               models={catalog}
               value={modelPick}
+              reloading={catalogLoading}
+              showAllowance={providerId === "opencode-go"}
               label={`${PROVIDERS.find((item) => item.id === providerId)?.label ?? "Provider"} models`}
+              onReload={() => loadProviderCatalog(true)}
               onChange={(id) => {
                 setModelPick(id);
                 rememberModel(providerId, id);

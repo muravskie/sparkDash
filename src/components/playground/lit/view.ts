@@ -283,7 +283,7 @@ export class Playground extends LightElement {
     if (this.external && this.model?.upstreamId && this.model.engine) {
       routed.provider = this.model.engine;
       routed.modelId = this.model.upstreamId;
-      if (this.model.engine === 'opencode-go') routed.sessionId = this.activeId;
+      if (this.model.engine === 'opencode-go' || this.model.engine === 'opencode') routed.sessionId = this.activeId;
     } else if (this.remoteHost) {routed.host = this.remoteHost; routed.tls = this.remoteTls;}
     return apiFetch(`/api/sparks/${encodeURIComponent(this.sparkId)}/playground/stream`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(routed), signal

@@ -17,11 +17,19 @@ export function ProviderModelMenu({
   models,
   value,
   onChange,
+  onReload,
+  reloading = false,
+  showAllowance = false,
   label = "Models",
 }: {
   models: readonly ProviderCatalogModel[];
   value: string;
   onChange: (id: string) => void;
+  /** Fetch the provider catalog again. Opening the list does not. */
+  onReload?: () => void;
+  reloading?: boolean;
+  /** $10 Go monthly allowance column. Other providers leave it off. */
+  showAllowance?: boolean;
   /** Dialog name, for example "OpenRouter models". */
   label?: string;
 }) {
@@ -66,21 +74,35 @@ export function ProviderModelMenu({
   return (
     <div className="bp-field bp-field--grow bp-model-menu" ref={root}>
       <span className="eyebrow">Model</span>
-      <button
-        type="button"
-        className="bp-model-trigger"
-        aria-label="Model"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={panelId}
-        disabled={!models.length}
-        onClick={() => {
-          if (open) close();
-          else setOpen(true);
-        }}
-      >
-        {selected?.name || "Choose a model"}
-      </button>
+      <div className="bp-model-row">
+        <button
+          type="button"
+          className="bp-model-trigger"
+          aria-label="Model"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={panelId}
+          disabled={!models.length}
+          onClick={() => {
+            if (open) close();
+            else setOpen(true);
+          }}
+        >
+          {selected?.name || "Choose a model"}
+        </button>
+        {onReload ? (
+          <button
+            type="button"
+            className="bp-model-reload"
+            aria-label="Reload models"
+            title="Fetch the latest model list from the provider"
+            disabled={reloading}
+            onClick={onReload}
+          >
+            {reloading ? "Reloading…" : "Reload"}
+          </button>
+        ) : null}
+      </div>
       {open ? (
         <div className="bp-model-panel" id={panelId} role="dialog" aria-label={label}>
           <input
@@ -104,12 +126,15 @@ export function ProviderModelMenu({
                 <th scope="col" className="bp-num" title="Output price per 1M tokens">Out</th>
                 <th scope="col" className="bp-num" title="Cached input price per 1M tokens">Cache</th>
                 <th scope="col" className="bp-num" title="Cache write price per 1M tokens">Write</th>
+                {showAllowance ? (
+                  <th scope="col" className="bp-num" title="Monthly usage included with the $10 Go subscription">Go $10</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {shown.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>No matching models</td>
+                  <td colSpan={showAllowance ? 8 : 7}>No matching models</td>
                 </tr>
               ) : null}
               {shown.map((model) => {
@@ -132,6 +157,7 @@ export function ProviderModelMenu({
                     <td className="bp-num">{rate(model.cost?.output, known)}</td>
                     <td className="bp-num">{known && model.cost?.cache_read != null ? money(model.cost.cache_read) : "—"}</td>
                     <td className="bp-num">{known && model.cost?.cache_write != null ? money(model.cost.cache_write) : "—"}</td>
+                    {showAllowance ? <td className="bp-num">{model.allowance || "—"}</td> : null}
                   </tr>
                 );
               })}

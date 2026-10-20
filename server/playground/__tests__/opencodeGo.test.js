@@ -8,11 +8,15 @@ import { DatabaseSync } from "node:sqlite";
 import express from "express";
 import {
   buildOpencodeGoCatalog,
+  clearOpencodeCache,
   clearOpencodeGoCache,
+  goAllowanceLabel,
   goChatBody,
   handleOpencodeGoStream,
+  loadOpencodeCatalog,
   loadOpencodeGoCatalog,
   loadOpencodeGoKey,
+  OPENCODE_MODELS_URL,
   presentOpencodeGoModel,
 } from "../opencodeGo.js";
 
@@ -249,4 +253,66 @@ test("catalog fetch joins the live list and reports whether a key is configured"
   });
   assert.equal(catalog.credential, false);
   assert.equal(catalog.models[0].line, "Hy3 · tools, reasoning · $0.14 in / $0.58 out per 1M");
+  assert.equal(catalog.models[0].allowance, "$60");
+  assert.equal(goAllowanceLabel("deepseek-v4.1-flash"), "$80");
+  assert.equal(goAllowanceLabel("beam-free"), "Unlimited");
+  assert.equal(goAllowanceLabel("omen-alpha"), null);
+});
+
+test("refresh skips the five-minute catalog cache", async () => {
+  let calls = 0;
+  const cacheSlot = { value: null };
+  const io = { existsSync: () => false, readFileSync: () => "", statSync: () => { throw new Error("no"); } };
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/models")) {
+      calls += 1;
+      return { ok: true, json: async () => ({ data: [{ id: calls === 1 ? "hy3" : "deepseek-v4.1-flash" }] }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        "opencode-go": {
+          models: {
+            hy3: { name: "Hy3" },
+            "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash" },
+          },
+        },
+      }),
+    };
+  };
+  const first = await loadOpencodeGoCatalog({ env: {}, io, fetchImpl, cacheSlot, now: 1_000 });
+  const cached = await loadOpencodeGoCatalog({ env: {}, io, fetchImpl, cacheSlot, now: 2_000 });
+  const fresh = await loadOpencodeGoCatalog({ env: {}, io, fetchImpl, cacheSlot, now: 3_000, refresh: true });
+  assert.equal(first.models[0].id, "hy3");
+  assert.equal(cached.models[0].id, "hy3");
+  assert.equal(fresh.models[0].id, "deepseek-v4.1-flash");
+  assert.equal(calls, 2);
+});
+
+test("opencode catalog includes deepseek-v4.1-flash-free from the zen list", async () => {
+  clearOpencodeCache();
+  const io = { existsSync: () => false, readFileSync: () => "", statSync: () => { throw new Error("no"); } };
+  const catalog = await loadOpencodeCatalog({
+    env: {},
+    io,
+    fetchImpl: async (url) => {
+      if (String(url) === OPENCODE_MODELS_URL) {
+        return { ok: true, json: async () => ({ data: [{ id: "deepseek-v4.1-flash-free" }] }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          opencode: {
+            models: {
+              "deepseek-v4.1-flash-free": { name: "DeepSeek V4.1 Flash Free", cost: { input: 0, output: 0 } },
+            },
+          },
+        }),
+      };
+    },
+  });
+  assert.equal(catalog.provider, "opencode");
+  const row = catalog.models.find((model) => model.id === "deepseek-v4.1-flash-free");
+  assert.equal(row.name, "DeepSeek V4.1 Flash Free");
+  assert.match(row.line, /free/);
 });

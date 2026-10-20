@@ -134,13 +134,13 @@ export function openRouterBase(env = process.env) {
 }
 
 /**
- * @param {{ fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv, now?: number }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv, now?: number, refresh?: boolean }} [opts]
  */
 export async function loadOpenRouterCatalog(opts = {}) {
   const env = opts.env || process.env;
   const now = opts.now || Date.now();
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
-  let models = catalogCache && now - catalogCache.at < CACHE_MS ? catalogCache.models : null;
+  let models = !opts.refresh && catalogCache && now >= catalogCache.at && now - catalogCache.at < CACHE_MS ? catalogCache.models : null;
   if (!models) {
     const liveRes = await fetchImpl(`${openRouterBase(env)}/v1/models`, {
       headers: { Accept: "application/json", "User-Agent": USER_AGENT },
