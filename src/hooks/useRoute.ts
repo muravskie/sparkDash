@@ -1,7 +1,8 @@
+import { withPageTransition } from "./pageTransition";
 import { useEffect, useCallback, useMemo, useState } from "react";
-import { idToPath, pathToId } from "../constants";
+import { KIOSK_ID, idToPath, pathToId } from "../constants";
 
-export type RouteMode = "app" | "showcase";
+export type RouteMode = "app" | "showcase" | "kiosk";
 
 export interface AppRoute {
   mode: RouteMode;
@@ -10,6 +11,7 @@ export interface AppRoute {
 }
 
 function parsePath(pathname: string): AppRoute {
+  if (pathToId(pathname) === KIOSK_ID) return { mode: "kiosk", showcaseSparkId: null };
   const showcase = pathname.match(/^\/showcase\/([^/]+)/);
   if (showcase) {
     return {
@@ -21,8 +23,8 @@ function parsePath(pathname: string): AppRoute {
 }
 
 /**
- * Parse the current URL for showcase vs normal app shell.
- * Call once at App root so showcase skips the dashboard chrome.
+ * Parse the current URL for showcase, kiosk or the normal app shell.
+ * Call once at App root so showcase and kiosk skip the dashboard chrome.
  */
 export function useAppRoute(): AppRoute {
   const [route, setRoute] = useState(() => parsePath(window.location.pathname));
@@ -37,7 +39,7 @@ export function useAppRoute(): AppRoute {
 }
 
 export interface RouteActions {
-  /** Switch view: pushes a history entry and scrolls to the top. */
+  /** Switch view: pushes a history entry, runs the page transition and scrolls to the top. */
   navigate: (id: string | null) => void;
   /** Switch view without adding a history entry (correcting a URL that no longer fits). */
   replace: (id: string | null) => void;
@@ -48,13 +50,14 @@ export interface RouteActions {
  *
  * URL scheme:
  *   /                      → Overview
- *   /tokens /energy /activity → dedicated fleet pages
+ *   /tokens /energy /activity /security → dedicated pages
  *   /spark/:id             → Spark detail page
  *   /bench/:type           → benchmark page
  *   /showcase/:id          → full-screen showcase (handled separately via useAppRoute)
+ *   /kiosk                 → wall display (handled separately via useAppRoute)
  *   /playground            → streaming chat
  *   /models                → model controller lifecycle
- *   /agent                 → OpenCode on uba
+ *   /agent                 → OpenCode agent
  *
  * The initial id comes from `initialActiveId()` in constants (pass it to the state's initialiser).
  * `navigate(id)` updates the URL and the active id; Back/forward work via popstate.
@@ -64,7 +67,7 @@ export function useRoute(setActiveId: (id: string | null) => void): RouteActions
   useEffect(() => {
     const handler = () => {
       const id = pathToId(window.location.pathname);
-      if (id !== null) setActiveId(id);
+      if (id !== null) withPageTransition(() => setActiveId(id));
     };
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
@@ -73,8 +76,7 @@ export function useRoute(setActiveId: (id: string | null) => void): RouteActions
   const navigate = useCallback(
     (id: string | null) => {
       window.history.pushState(null, "", idToPath(id));
-      setActiveId(id);
-      window.scrollTo(0, 0);
+      withPageTransition(() => setActiveId(id), { scrollTop: true });
     },
     [setActiveId]
   );

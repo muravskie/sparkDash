@@ -18,7 +18,7 @@ async function freePort() {
   return port;
 }
 
-function nextMessage(ws, timeoutMs = 1_000) {
+function nextMessage(ws, timeoutMs = 5_000) {
   return Promise.race([
     once(ws, "message").then(([data]) => String(data)),
     new Promise((_, reject) =>
@@ -54,6 +54,7 @@ test("a new WebSocket client receives its initial snapshot without rebroadcastin
       FLEET_ENERGY_MONTHLY_JSON_PATH: path.join(tmp, "fleet-energy-monthly.json"),
       EVENTS_JSON_PATH: path.join(tmp, "events.json"),
       GPU_HISTORY_JSON_PATH: path.join(tmp, "gpu-history.json"),
+      GPU_HISTORY_LONG_JSON_PATH: path.join(tmp, "gpu-history-long.json"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

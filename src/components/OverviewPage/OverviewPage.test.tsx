@@ -46,7 +46,7 @@ function barLabels(container: HTMLElement): string[] {
 describe("Overview card", () => {
   it("names each bar for what it measures", () => {
     const { container } = render(<OverviewPage sparks={[host({ cpuTemp: 51 })]} />);
-    expect(barLabels(container)).toEqual(["VRAM", "GPU", "RAM", "GPU temp", "GPU power"]);
+    expect(barLabels(container)).toEqual(["VRAM", "GPU", "RAM", "GPU temp", "GPU power", "CPU temp"]);
   });
 
   it("calls the temperature bar GPU temp even without a CPU sensor", () => {
@@ -78,6 +78,15 @@ describe("Overview panels can be hidden", () => {
     const { container } = render(<OverviewPage sparks={[host()]} />);
     expect(tileLabels(container)).toEqual(["Fleet decode", "Fleet power", "Memory in use", "Online"]);
     expect(container.querySelector('[aria-label="Recent activity"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("Inference activity");
+  });
+
+  it("counts hidden cluster workers in Fleet power", () => {
+    const head = { ...host({ kind: "spark" }), id: "head", role: "head" } as SparkSnapshot;
+    const worker = { ...host({ kind: "spark" }), id: "worker", role: "worker" } as SparkSnapshot;
+    const { container } = render(<OverviewPage sparks={[head, worker]} hideWorkers />);
+    const power = [...container.querySelectorAll(".ov-kpi")].find((k) => k.textContent?.includes("Fleet power"));
+    expect(power?.querySelector(".big-num")?.textContent).toContain("160");
   });
 
   it("hides single tiles and sizes the row to the rest", () => {

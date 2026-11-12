@@ -15,6 +15,15 @@ const SPARKS_SECRETS_PATH =
 /** AES key file (auto-generated if SPARKDASH_SECRETS_KEY unset). */
 const SECRETS_KEY_PATH =
   process.env.SECRETS_KEY_PATH || path.join(ROOT, "config", ".secrets-key");
+/** Storage Manager: the latest disk analysis per unit, so it survives a restart (gitignored). */
+const STORAGE_SCANS_JSON_PATH =
+  process.env.STORAGE_SCANS_JSON_PATH || path.join(ROOT, "config", "storage-scans.json");
+/** Storage Manager: sudo passwords the user chose to remember, encrypted with the secrets key (gitignored). */
+const STORAGE_SUDO_JSON_PATH =
+  process.env.STORAGE_SUDO_JSON_PATH || path.join(ROOT, "config", "storage-sudo.json");
+/** Storage Manager: per-Spark acknowledgements that allow deleting folders as administrator (gitignored). */
+const STORAGE_ACKS_JSON_PATH =
+  process.env.STORAGE_ACKS_JSON_PATH || path.join(ROOT, "config", "storage-acks.json");
 /** Daily LLM tok/s rollups (gitignored). */
 const LLM_DAILY_JSON_PATH =
   process.env.LLM_DAILY_JSON_PATH || path.join(ROOT, "config", "llm-daily.json");
@@ -27,9 +36,61 @@ const FLEET_ENERGY_JSON_PATH =
 /** Permanent monthly energy roll-up (gitignored; survives resets and fleet changes). */
 const FLEET_ENERGY_MONTHLY_JSON_PATH =
   process.env.FLEET_ENERGY_MONTHLY_JSON_PATH || path.join(ROOT, "config", "fleet-energy-monthly.json");
+// Opt-in 48 h / 30 d unit history (Settings → metricsHistory); never written while it is off.
+const METRICS_HISTORY_JSON_PATH =
+  process.env.METRICS_HISTORY_JSON_PATH || path.join(ROOT, "config", "metrics-history.json");
+/** Alert rule switches, channel settings (no URLs — those are in the secrets store) and the firing set; mode 0600. */
+const ALERTS_JSON_PATH =
+  process.env.ALERTS_JSON_PATH || path.join(ROOT, "config", "alerts.json");
+/** Harness helper attaches (URLs and routes; bearer tokens stay in the secrets store). */
+const OCCUPANCY_HELPERS_JSON_PATH =
+  process.env.OCCUPANCY_HELPERS_JSON_PATH || path.join(ROOT, "config", "occupancy-helpers.json");
+/** Last good hosted-model price catalog (Cost compare page offline fallback). */
+const MODEL_PRICES_JSON_PATH =
+  process.env.MODEL_PRICES_JSON_PATH || path.join(ROOT, "config", "model-prices.json");
+/**
+ * Opt-in refresh of that catalog from raw.githubusercontent.com (Cost compare).
+ * While off, no outbound fetch is made: the page serves the last catalog on disk
+ * (MODEL_PRICES_JSON_PATH) or reports pricing as unavailable.
+ */
+const MODEL_PRICES_FETCH = ["1", "true"].includes(
+  String(process.env.MODEL_PRICES_FETCH || "").toLowerCase()
+);
+
+// ─── Model discovery ("Discover on this Spark") ──────────
+/**
+ * Folders the discovery scan walks on the dashboard's own Spark (find, depth 3)
+ * looking for launchable model folders. Read ONCE at import; the strings are
+ * spliced UNQUOTED into a fixed find template, so they must pass the allowlist
+ * in models/discovery.js (which is why they are config-only, never request input).
+ */
+const MODEL_DISCOVERY_DEFAULT_ROOTS = Object.freeze(["$HOME", "$HOME/llms", "$HOME/models", "$HOME/Qwen*"]);
+/** Extra roots from MODEL_DISCOVERY_ROOTS (colon-separated), appended to the defaults. */
+function parseModelDiscoveryRoots(raw) {
+  return String(raw || "")
+    .split(":")
+    .map((r) => r.trim())
+    .filter(Boolean);
+}
+const MODEL_DISCOVERY_ROOTS = Object.freeze([
+  ...MODEL_DISCOVERY_DEFAULT_ROOTS,
+  ...parseModelDiscoveryRoots(process.env.MODEL_DISCOVERY_ROOTS),
+]);
+/** Per-command cap for the fixed discovery templates on the local host. */
+const MODEL_DISCOVERY_TIMEOUT_MS = parseInt(process.env.MODEL_DISCOVERY_TIMEOUT_MS || "8000", 10);
 
 // ─── LLM / Comfy probe timeouts ──────────────────────────
 const LLM_PROBE_TIMEOUT_MS = 3000;
+/**
+ * Fleet-wide cap on running decode + prefill + quality benchmarks (each unit still
+ * runs one at a time). Default 2; MAX_ACTIVE_BENCH_JOBS raises or lowers it, 1-32.
+ * @param {string | undefined} raw
+ */
+function parseMaxActiveBenchJobs(raw) {
+  const n = Number.parseInt(String(raw ?? ""), 10);
+  return Number.isInteger(n) ? Math.min(32, Math.max(1, n)) : 2;
+}
+const MAX_ACTIVE_BENCH_JOBS = parseMaxActiveBenchJobs(process.env.MAX_ACTIVE_BENCH_JOBS);
 const COMFY_PROBE_TIMEOUT_MS = parseInt(process.env.COMFY_PROBE_TIMEOUT_MS || "3000", 10);
 const TAILSCALE_PROBE_TIMEOUT_MS = parseInt(process.env.TAILSCALE_PROBE_TIMEOUT_MS || "8000", 10);
 const SSH_CONNECT_TIMEOUT = 5; // seconds
@@ -51,7 +112,7 @@ const POLL_INTERVAL_LLM = parseInt(process.env.POLL_INTERVAL_LLM || "2000", 10);
 const POLL_INTERVAL_COMFY = parseInt(process.env.POLL_INTERVAL_COMFY || "2000", 10);
 // Tailnet membership changes slowly; each poll is an SSH round-trip.
 const POLL_INTERVAL_TAILSCALE = parseInt(process.env.POLL_INTERVAL_TAILSCALE || "30000", 10);
-// Kernel journal scan for NV_ERR_NO_MEMORY — not on the 2s GPU loop.
+// Incremental kernel error reads after backfill, independent of the GPU poll interval.
 const POLL_INTERVAL_NVERR = parseInt(process.env.POLL_INTERVAL_NVERR || "60000", 10);
 // dmon -c 1 -d 1 blocks ~1s; default 2s avoids stacking with in-flight guards
 const POLL_INTERVAL_BANDWIDTH = parseInt(process.env.POLL_INTERVAL_BANDWIDTH || "2000", 10);
@@ -182,6 +243,9 @@ const HOST_PATHS = {
 };
 
 export {
+  STORAGE_SCANS_JSON_PATH,
+  STORAGE_SUDO_JSON_PATH,
+  STORAGE_ACKS_JSON_PATH,
   SPARKS_JSON_PATH,
   GPU_MEMORY_JSON_PATH,
   SPARKS_SECRETS_PATH,
@@ -190,6 +254,14 @@ export {
   LLM_TOKEN_JSON_PATH,
   FLEET_ENERGY_JSON_PATH,
   FLEET_ENERGY_MONTHLY_JSON_PATH,
+  METRICS_HISTORY_JSON_PATH,
+  ALERTS_JSON_PATH,
+  OCCUPANCY_HELPERS_JSON_PATH,
+  MODEL_PRICES_JSON_PATH,
+  MODEL_PRICES_FETCH,
+  MODEL_DISCOVERY_DEFAULT_ROOTS,
+  MODEL_DISCOVERY_ROOTS,
+  MODEL_DISCOVERY_TIMEOUT_MS,
   LLM_PROBE_TIMEOUT_MS,
   COMFY_PROBE_TIMEOUT_MS,
   TAILSCALE_PROBE_TIMEOUT_MS,
@@ -201,6 +273,8 @@ export {
   POLL_INTERVAL_STORAGE,
   POLL_INTERVAL_LLM,
   POLL_INTERVAL_COMFY,
+  MAX_ACTIVE_BENCH_JOBS,
+  parseMaxActiveBenchJobs,
   POLL_INTERVAL_TAILSCALE,
   POLL_INTERVAL_NVERR,
   POLL_INTERVAL_BANDWIDTH,
