@@ -1,8 +1,24 @@
 {
   "pollIntervalMs": 1000,
-  "defaultLlmPort": 8888,
+  "defaultLlmPort": 8000,
   "autoHideOffline": false,
+  "hideWorkers": false,
   "temperatureUnit": "celsius",
   "benchDebugTraces": false,
-  "density": "compact"
+  "density": "compact",
+  "showFleetEnergy": true,
+  "showFleetExceptions": false,
+  "showOverviewSearch": false,
+  "showLlmTokenTotals": true,
+  "showKpiDecode": true,
+  "showKpiPower": true,
+  "showKpiMemory": true,
+  "showKpiTokens": true,
+  "showActivityFeed": true,
+  "benchShareImage": true,
+  "timeZone": "",
+  "energyPricePerKwh": 0.34212,
+  "energyCurrency": "$",
+  "showVramBreakdown": true,
+  "prometheusExport": false
 }
