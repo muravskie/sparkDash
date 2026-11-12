@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Tag } from "../../ui/Tag";
 import type { ProviderCatalogModel } from "./BenchTargetFrame";
 
 function money(n: number): string {
@@ -10,6 +11,32 @@ function money(n: number): string {
 function rate(value: number | undefined, known: boolean): string {
   if (!known) return "—";
   return typeof value === "number" && Number.isFinite(value) ? money(value) : "—";
+}
+
+/** Per-1M prices beside a remote model name. Same pills local models use for context and engine. */
+export function ModelPriceTags({ model }: { model: ProviderCatalogModel }) {
+  const cost = model.cost;
+  const allowance = model.allowance?.trim();
+  if (!cost && !allowance) return null;
+  return (
+    <span className="bp-model-prices">
+      {cost ? (
+        <>
+          <Tag title="Input price per 1M tokens">{money(cost.input)} in</Tag>
+          <Tag title="Output price per 1M tokens">{money(cost.output)} out</Tag>
+          {typeof cost.cache_read === "number" ? (
+            <Tag title="Cached input price per 1M tokens">{money(cost.cache_read)} cache</Tag>
+          ) : null}
+          {typeof cost.cache_write === "number" ? (
+            <Tag title="Cache write price per 1M tokens">{money(cost.cache_write)} write</Tag>
+          ) : null}
+        </>
+      ) : null}
+      {allowance ? (
+        <Tag title="Monthly usage included with the $10 Go subscription">Go $10 · {allowance}</Tag>
+      ) : null}
+    </span>
+  );
 }
 
 /** Hosted-provider model list as a table. A native select can only show one flat line. */

@@ -4,15 +4,32 @@ import { EventEmitter } from "node:events";
 import {
   chunksFromOpencodeEvent,
   isOpencodeFreeTier,
+  opencodeCliLaunch,
   promptFromMessages,
   streamOpencodeCli,
 } from "../opencodeCli.js";
 
 test("free tier is the -free id or a zero price", () => {
   assert.equal(isOpencodeFreeTier("deepseek-v4.1-flash-free"), true);
+  assert.equal(isOpencodeFreeTier("minimax-m3.1-flash-free"), false);
+  assert.equal(isOpencodeFreeTier("beam-free"), false);
+  assert.equal(isOpencodeFreeTier("longcat-2.5-preview-free"), false);
   assert.equal(isOpencodeFreeTier("deepseek-v4.1-flash"), false);
   assert.equal(isOpencodeFreeTier("custom", [{ id: "custom", cost: { input: 0, output: 0 } }]), true);
   assert.equal(isOpencodeFreeTier("paid", [{ id: "paid", cost: { input: 0.15, output: 0.6 } }]), false);
+});
+
+test("the host launch does not keep the container working directory", () => {
+  const io = {
+    readdirSync: () => ["fedor"],
+    existsSync: (file) => String(file).endsWith(`${"/opencode"}`),
+    statSync: () => ({ uid: 1000, gid: 1000 }),
+  };
+  const launch = opencodeCliLaunch({ HOST_ROOT_PATH: "/host/root", PWD: "/app" }, io);
+  assert.equal(launch.env.PWD, "/home/fedor");
+  assert.equal(launch.env.HOME, "/home/fedor");
+  assert.ok(launch.args.includes("-W"));
+  assert.ok(launch.args.includes("/home/fedor"));
 });
 
 test("a single user message stays the prompt", () => {

@@ -41,6 +41,12 @@ describe("PlaygroundPage", () => {
     for (const label of ["Temperature", "Top P", "Top K", "Presence penalty", "Thinking budget", "Thinking", "Reasoning effort"]) {
       expect(text).toContain(label);
     }
+    const advanced = container.querySelector(".advanced-settings") as HTMLDetailsElement | null;
+    expect(advanced?.open).toBe(false);
+    expect(advanced?.textContent).toContain("Presence penalty");
+    expect(advanced?.textContent).toContain("Thinking budget");
+    expect(advanced?.querySelector("[aria-label='Tool definitions']")).toBeTruthy();
+    expect(advanced?.contains(container.querySelector("[aria-label='Top K']"))).toBe(false);
     expect(container.querySelector("[aria-label='Max tokens']")).toBeTruthy();
     expect(text).toContain("Import JSON");
     expect(text).toContain("Save preset");
@@ -76,6 +82,7 @@ describe("PlaygroundPage", () => {
                 features: ["tools", "reasoning"],
                 context: "1M",
                 cost: { input: 0.15, output: 0.5, cache_read: 0.03 },
+                allowance: "$80",
               }],
             }),
           };
@@ -91,6 +98,11 @@ describe("PlaygroundPage", () => {
       expect(container.querySelector("[aria-label='Provider']")).toBeTruthy();
       expect(container.querySelector("[aria-label='Model']")?.textContent).toContain("GLM-5.3-Flash");
     });
+    const prices = container.querySelector(".bp-target__row .bp-model-prices");
+    expect(prices?.textContent).toContain("$0.15 in");
+    expect(prices?.textContent).toContain("$0.50 out");
+    expect(prices?.textContent).toContain("$0.03 cache");
+    expect(prices?.textContent).toContain("Go $10 · $80");
     await act(async () => {
       container.querySelector<HTMLButtonElement>("[aria-label='Model']")?.click();
     });

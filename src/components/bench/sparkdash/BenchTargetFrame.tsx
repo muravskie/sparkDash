@@ -10,7 +10,7 @@ import { Tag } from "../../ui/Tag";
 import { PageEmpty } from "./pageParts";
 import { isWorkerSpark } from "../../../api/sparkRole";
 import { SparkChips, useBenchSparks } from "../SparkChips";
-import { ProviderModelMenu } from "./ProviderModelMenu";
+import { ModelPriceTags, ProviderModelMenu } from "./ProviderModelMenu";
 import { useStickyHeight } from "./useStickyHeight";
 
 /** Same key the Spark page's Remote launcher uses, so a typed host carries over. */
@@ -53,7 +53,7 @@ function providerNote(providerId: string, credential: boolean | null) {
   if (providerId === "opencode") {
     return credential === false
       ? "OpenCode API key is not configured on the server, so chat cannot start. Set OPENCODE_GO_KEY_FILE to a mode-600 file containing the console API key."
-      : "Models come from OpenCode. Free models, including DeepSeek V4.1 Flash Free, are sent through the OpenCode CLI. Paid models use the API key on the server.";
+      : "Models come from OpenCode. DeepSeek V4.1 Flash Free is sent through the OpenCode CLI. MiniMax M3.1 Flash Free, Beam Free, and LongCat 2.5 Preview Free use the Go API directly.";
   }
   return credential === false
     ? "OpenCode Go API key is not configured on the server, so chat cannot start. Set OPENCODE_GO_KEY_FILE to a mode-600 file containing the console API key."
@@ -374,7 +374,10 @@ export function BenchTargetFrame({
               ) : null}
             </>
           ) : selectedProvider ? (
-            <Tag tone="acc">{selectedProvider.name}</Tag>
+            <>
+              <Tag tone="acc">{selectedProvider.name}</Tag>
+              <ModelPriceTags model={selectedProvider} />
+            </>
           ) : remote.target ? (
             <Tag tone="acc">{formatLlmBaseUrl(remote.target)}</Tag>
           ) : null}

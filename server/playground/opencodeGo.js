@@ -600,6 +600,10 @@ export async function handleOpencodeStream(opts) {
   const env = opts.env || process.env;
   const modelId = typeof opts.body?.modelId === "string" ? opts.body.modelId.trim() : "";
   if (!MODEL_ID.test(modelId)) throw fail("Choose an OpenCode model", 400);
+  if (modelId === "minimax-m3.1-flash-free" || modelId === "beam-free" || modelId === "longcat-2.5-preview-free") {
+    await handleOpencodeGoStream(opts);
+    return;
+  }
   if (isOpencodeFreeTier(modelId, catalogCaches.opencode?.models)) {
     await streamOpencodeCli({ res: opts.res, modelId, body: opts.body, signal: opts.signal, env });
     return;

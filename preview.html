@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; worker-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http: blob: data:; style-src 'self' 'unsafe-inline' https: http: blob: data:; img-src 'self' data: blob: https: http:; font-src 'self' data: https: http:; media-src data: blob: https: http:; frame-src data: blob: https: http:; connect-src https: http: wss: ws: blob: data:; worker-src blob: data: https: http:; base-uri 'none'; form-action https: http:; object-src 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>HTML preview · Spark</title>
@@ -16,9 +16,9 @@
   </style>
 </head>
 <body>
-  <header>HTML preview<span>Inline JavaScript enabled · External requests blocked</span></header>
+  <header>HTML preview<span>JavaScript enabled · Isolated from this dashboard</span></header>
   <p id="status" role="status">Loading preview…</p>
-  <iframe hidden title="Generated HTML preview" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+  <iframe hidden title="Generated HTML preview" sandbox="allow-scripts allow-forms allow-modals allow-popups" referrerpolicy="no-referrer"></iframe>
   <script type="module" src="/src/components/playground/lit/preview-page.ts"></script>
 </body>
 </html>

@@ -63,6 +63,12 @@
   text-align: left;
   cursor: pointer;
 }
+.bp-model-prices {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
 .bp-model-reload {
   flex: none;
   font-family: inherit;

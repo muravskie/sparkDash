@@ -153,7 +153,8 @@ export class MetricsStrip extends LightElement {
     const generationNow = liveGeneration != null && liveGeneration !== 0
       ? liveGeneration
       : latestNonZero(this.rows.map((row) => row.generation));
-    const visible = SERIES.filter((series) => series.key !== "ttft" || ringHasValue(this.rows, "ttft") || nowValue(this.now, "ttft") != null);
+    // TTFT stays in the probe ring for other readers. This strip does not chart it.
+    const visible = SERIES.filter((series) => series.key !== "ttft");
     return html`<div class="section-heading"><h2>Live engine performance</h2><div class="metric-view-controls"><label class="window-picker">Time window<select aria-label="Playground time window" @change=${this.changeWindow}>${WINDOWS.map((seconds) => html`<option value=${seconds} .selected=${seconds === this.windowSeconds}>${seconds / 60} min</option>`)}</select></label></div></div>
       <div class="metric-grid compact-metrics">${visible.map((series, index) => {
         const samples: ChartSample[] = history.map((row) => ({ at: row.at, value: row[series.key] }));

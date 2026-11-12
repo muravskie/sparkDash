@@ -61,6 +61,7 @@ import { ToolEvalStore } from "./tooleval/ToolEvalStore.js";
 import { ToolEvalManager } from "./tooleval/ToolEvalManager.js";
 import { registerToolEvalRoutes } from "./tooleval/routes.js";
 import { registerPlaygroundRoutes } from "./playground/relay.js";
+import { registerPublicHtmlPreview } from "./playground/htmlPreview.js";
 import { createControllerClient } from "./models/client.js";
 import { loadControllerKey } from "./models/key.js";
 import { blockScriptLaunch, registerModelRoutes } from "./models/routes.js";
@@ -469,12 +470,15 @@ const server = createServer(app);
 
 // The copied playground posts a full conversation. Other routes keep the default limit.
 app.use("/api/sparks/:id/playground/stream", express.json({ limit: "8mb" }));
+app.use("/api/playground/html-preview", express.json({ limit: "2mb" }));
 app.use(express.json());
 // Registered ahead of the auth middleware: a remote browser holding no token
 // (or a stale one) must still be able to learn that it needs one.
 app.get("/api/auth/status", createHostGuardMiddleware(), (req, res) => {
   res.json(authStatus(req));
 });
+// A preview navigation cannot send the bearer token. The id is the capability.
+registerPublicHtmlPreview(app);
 app.use(createAuthMiddleware());
 
 /** Fleet event log, newest first. Query: limit, sparkId, sinceId. */

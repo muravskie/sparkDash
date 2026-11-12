@@ -150,6 +150,9 @@
 .llm-playground .parameter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .llm-playground .parameter-grid input, .llm-playground .parameter-grid select { font-family: var(--font-mono); font-size: 12px; }
 .llm-playground .chat-settings details > textarea { margin-top: 12px; }
+.llm-playground .advanced-settings > summary { font-weight: 600; color: var(--ink); }
+.llm-playground .advanced-settings-body { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.llm-playground .advanced-settings-body .context-note { margin: 0; }
 .llm-playground .tools-editor { font: 11px/1.6 var(--font-mono); min-height: 160px; }
 .llm-playground .request-inspector { padding: 16px 20px; border-top: 1px solid var(--rule); }
 .llm-playground .request-inspector pre { max-height: 300px; overflow: auto; padding: 12px 0; font-size: 10px; }

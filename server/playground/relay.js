@@ -11,6 +11,7 @@ import { loadGenerationDefaults } from "./generationDefaults.js";
 import { handleOpencodeGoStream, handleOpencodeStream, loadOpencodeCatalog, loadOpencodeGoCatalog } from "./opencodeGo.js";
 import { handleOpenRouterStream, loadOpenRouterCatalog } from "./openrouter.js";
 import { proxyChatStream } from "./passthrough.js";
+import { registerHtmlPreviewPost } from "./htmlPreview.js";
 import { buildChatBody, messagesForReplay, parseConcurrency } from "./requestBody.js";
 
 /**
@@ -183,6 +184,7 @@ function fail(res, status, message) {
  * }} deps
  */
 export function registerPlaygroundRoutes(app, deps) {
+  registerHtmlPreviewPost(app);
   app.get("/api/playground/providers/opencode-go/models", async (req, res) => {
     try {
       res.json(await loadOpencodeGoCatalog({ refresh: req.query.refresh === "1" }));

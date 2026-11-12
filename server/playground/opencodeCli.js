@@ -1,7 +1,7 @@
 /**
- * Free-tier OpenCode models refuse a direct API call. Those ids go through
- * the OpenCode CLI (`opencode run`), which is the client the free tier accepts.
- * Paid OpenCode models stay on the HTTP API.
+ * Zen free-tier models refuse a direct API call. Those ids go through the
+ * OpenCode CLI. MiniMax M3.1 Flash Free, Beam Free, and LongCat 2.5 Preview
+ * Free are served by the Go gateway, so they stay on that API.
  */
 
 import { spawn } from "node:child_process";
@@ -22,8 +22,14 @@ function fail(message, status) {
  * @param {string} modelId
  * @param {readonly { id: string, cost?: { input?: number, output?: number, cache_read?: number, cache_write?: number } | null }[] | null | undefined} [catalog]
  */
+const GO_DIRECT_FREE = new Set([
+  "minimax-m3.1-flash-free",
+  "beam-free",
+  "longcat-2.5-preview-free",
+]);
+
 export function isOpencodeFreeTier(modelId, catalog) {
-  if (typeof modelId !== "string" || !modelId) return false;
+  if (typeof modelId !== "string" || !modelId || GO_DIRECT_FREE.has(modelId)) return false;
   if (/-free$/i.test(modelId)) return true;
   const row = Array.isArray(catalog) ? catalog.find((model) => model.id === modelId) : null;
   const cost = row?.cost;
@@ -131,7 +137,8 @@ export function opencodeCliLaunch(env = process.env, io = fs) {
       return {
         command: "nsenter",
         args: ["-t", "1", "-m", "-W", hostHome, "--setuid", String(uid), "--setgid", String(gid), "--", path.join(hostHome, ".opencode", "bin", "opencode")],
-        env: { ...env, HOME: hostHome, USER: name, LOGNAME: name },
+        // The dashboard process lives in /app. OpenCode follows PWD, and /app does not exist on the host.
+        env: { ...env, HOME: hostHome, USER: name, LOGNAME: name, PWD: hostHome },
         cwd: undefined,
       };
     }

@@ -9,8 +9,7 @@ function display(source: string) {
   const bytes = new TextEncoder().encode(previewDocument(source));
   let binary = '';
   for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-  // The wrapper's frame-src data: blocks subsequent HTTP navigations as well as
-  // external requests. allow-same-origin is deliberately absent from the sandbox.
+  // allow-same-origin is deliberately absent, so this document cannot read the dashboard origin.
   frame.src = 'data:text/html;base64,' + btoa(binary);
   frame.hidden = false;
   status.hidden = true;
