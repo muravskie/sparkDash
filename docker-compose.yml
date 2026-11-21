@@ -58,7 +58,7 @@ services:
       # model-controller bearer key. Host file stays mode 600; this
       # container runs as root and can read the mount. Not copied into config/.
       - ${HOME}/.config/spark-model-controller/api-key:/run/secrets/model-controller-api-key:ro
-      # OpenCode basic-auth file. Same host file llm-dashboard uses. Mode 600,
+      # OpenCode basic-auth file. Mode 600,
       # read-only, not copied into config/.
       - ${HOME}/.config/qwen38/opencode-uba-service.json:/run/secrets/opencode-credentials:ro
       # Remote Sparks with SSH *key* auth: OpenSSH inside the container uses
@@ -79,7 +79,7 @@ services:
       - SPARKDASH_APIKEYS_BRIDGE_SOCKET=${SPARKDASH_APIKEYS_BRIDGE_SOCKET:-}
       - SPARKDASH_APIKEYS_BRIDGE_TOKEN=${SPARKDASH_APIKEYS_BRIDGE_TOKEN:-}
       - PORT=5555
-      # OpenCode at the root of its own port. 8092 is llm-dashboard on this host.
+      # OpenCode at the root of its own port.
       # Host network: the process bind is enough; no ports: entry.
       - AGENT_PORT=8093
       - LLM_PORT=${LLM_PORT:-8888}

@@ -2,7 +2,7 @@
 
 This fork is the place where sparkDash grows the bench, chat, and model-lifecycle tools that already exist beside it. Upstream stays [MiaAI-Lab/sparkDash](https://github.com/MiaAI-Lab/sparkDash). This checkout tracks that repo as `upstream` and pushes to [muravskie/sparkDash](https://github.com/muravskie/sparkDash) as `origin`. Day-to-day work is on the `extensions` branch.
 
-The goal is one interface for the fleet. Monitoring, benchmarks, a chat playground, the OpenCode agent, live charts, and model switching all live in sparkDash. llm-dashboard and model-controller stay the sources of behavior. They are not replaced as services on the Spark; their screens move here.
+The goal is one interface for the fleet. Monitoring, benchmarks, a chat playground, the OpenCode agent, live charts, and model switching all live in sparkDash. model-controller stays the lifecycle service. llm-dashboard was the previous screen for those tools and is no longer running on this host.
 
 New screens and servers go in new directories. Existing sparkDash files change only where a route, a sidebar entry, or a benchmark job has to know about the new behavior. That keeps a later merge from `upstream/main` small.
 

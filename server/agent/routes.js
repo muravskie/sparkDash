@@ -9,7 +9,7 @@ import { createUpstreamLocator } from "./upstream.js";
 import { createAgentUpgrade } from "./upgrade.js";
 
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
-/** llm-dashboard's OpenCode port on this host. 8093 is free. */
+/** OpenCode embed port on this host. */
 export const DEFAULT_AGENT_PORT = 8093;
 
 /**
