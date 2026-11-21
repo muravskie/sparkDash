@@ -62,19 +62,19 @@ The fork also still has `main` (`3aeaed0`, 2026-09-19) and `dashboard-throughput
 | `~/code/sparkDash` | Dashboard. UI on `:5555`. Agent on `:8093`, upstream default `127.0.0.1:14096`. Container name `sparkDash`, host network. |
 | `~/code/model-controller` | Lifecycle. Socket `/run/spark-model-controller/controller.sock`. LAN API `192.168.1.64:29999`. Installed registry `/etc/spark-model-controller/models.yaml`. |
 | `~/code/qwen38-flash-next-recipe` | Live Flash-Next recipe (`recipe.yaml`, `run.sh`). Container `qwen38-flash-next` on `:8000`. |
-| `~/.config/qwen38/` | Host state. Keep it. Holds `opencode-uba-service.json` (sparkDash Agent credentials), `controller-managed`, the API key, and the deployed `keepalive-proxy.py`. |
+| `~/.config/qwen38/` | Host state for the live agent and the SGLang registry entry. Holds `opencode-uba-service.json`, `api-key`, `chat-template-sglang.jinja`, `generation-config-qwen38.json`, `controller-managed`, and `sglang-cache`. |
 
 ## Still running, not part of the checkout
 
 `qwen38-keepalive.service` was stopped and disabled on 2026-11-21. Nothing
-listens on `:30001`. The proxy file remains at
-`~/.config/qwen38/keepalive-proxy.py`. Its old upstream was port 30000.
+listens on `:30001`. `keepalive-proxy.py` was removed on 2026-11-21. The unit
+file is still installed and disabled.
 
-`qwen38-sglang.service` was inactive. It starts a Docker container by name and
-does not need the git checkout. Leave it disabled.
+`qwen38-sglang.service` is a second writer for the container the controller
+already defines as `qwen3.8-27b`. It is disabled. The exited container was
+removed. The unit file is still installed until it is deleted.
 
-`~/.local/bin/oc` is an opencode wrapper installed by the old repo. It does not
-read the checkout. A comment names the repo. Harmless to leave.
+`~/.local/bin/oc` was removed on 2026-11-21. OpenCode itself is unchanged.
 
 ## Ports on this host (2026-11-21)
 
