@@ -25,6 +25,7 @@ export const BENCH_TYPES: readonly BenchType[] = [
   { id: "quality", label: "Quality", blurb: "A fixed, seeded quality suite to compare models, quantisations and KV-cache formats.", engine: "sparkdash", family: "sparkDash" },
   { id: "quality-compare", label: "Quality compare", blurb: "Any two saved quality runs side by side, from any units: where one build is better, in plain words and in numbers.", engine: "sparkdash", family: "sparkDash", subPageOf: "quality" },
   { id: "tool-eval", label: "Tool Eval Bench", blurb: "Tool-calling quality across 69 deterministic scenarios (selection, parameters, multi-step, safety).", engine: "tool-eval", family: "Tool Eval Bench" },
+  { id: "campaign", label: "Campaign", blurb: "Decode, prefill, quality, and tool-eval in one pass, with one shared setup.", engine: "sparkdash", family: "sparkDash" },
 ];
 
 const BY_ID = new Map(BENCH_TYPES.map((b) => [b.id, b]));

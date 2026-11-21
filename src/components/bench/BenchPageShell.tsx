@@ -32,6 +32,7 @@ export function BenchPageShell({ type, spark, sparks, onSelectSpark, tools, pick
       case "quality": return { label: t("catalog.quality.label"), blurb: t("catalog.quality.blurb") };
       case "quality-compare": return { label: t("catalog.qualityCompare.label"), blurb: t("catalog.qualityCompare.blurb") };
       case "tool-eval": return { label: t("catalog.toolEval.label"), blurb: t("catalog.toolEval.blurb") };
+      case "campaign": return { label: t("catalog.campaign.label"), blurb: t("catalog.campaign.blurb") };
       default: return null;
     }
   };

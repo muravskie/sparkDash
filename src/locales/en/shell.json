@@ -80,6 +80,10 @@
     "qualityCompare": {
       "label": "Quality compare",
       "blurb": "Any two saved quality runs side by side, from any units."
+    },
+    "campaign": {
+      "label": "Campaign",
+      "blurb": "Decode, prefill, quality, and tool-eval in one pass, with one shared setup."
     }
   },
   "palette": {

@@ -15,5 +15,6 @@ export function useBenchLabels(): Record<string, BenchLabel> {
     quality: { label: t("bench.quality.label"), blurb: t("bench.quality.blurb") },
     "quality-compare": { label: t("bench.qualityCompare.label"), blurb: t("bench.qualityCompare.blurb") },
     "tool-eval": { label: t("bench.toolEval.label"), blurb: t("bench.toolEval.blurb") },
+    campaign: { label: t("bench.campaign.label"), blurb: t("bench.campaign.blurb") },
   }), [t]);
 }

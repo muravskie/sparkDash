@@ -11,6 +11,7 @@
     "prefill": { "label": "预填充", "blurb": "跨上下文长度测试提示词处理速度和首个 token 时间。" },
     "quality": { "label": "质量", "blurb": "使用固定随机种子的质量套件比较模型、量化方式和 KV 缓存格式。", "tab": "套件" },
     "toolEval": { "label": "工具调用评测", "blurb": "通过 69 个确定性场景评测工具调用质量（选择、参数、多步和安全）。", "family": "工具调用评测" },
+    "campaign": { "label": "组合评测", "blurb": "用同一套设置依次运行解码、预填充、质量和工具调用评测。" },
     "qualityCompare": {
       "label": "质量比较",
       "blurb": "任意两次已保存的质量运行并排比较，可跨单元：用通俗语言和数字说明哪个构建更好。",
@@ -147,5 +148,99 @@
     "loading": "正在加载两次运行…",
     "emptyTitle": "尚无可比较的内容",
     "emptyBody": "选择一个被测运行和一个参考运行。若 A 的模型系列已固定参考运行，B 会自动填入。"
+  },
+  "campaign": {
+    "presets": "预设",
+    "headline": "摘要",
+    "detailed": "详细",
+    "custom": "自定义设置。只有旋钮相同的两次组合评测才会配对。",
+    "thinking": "思考",
+    "temperature": "温度",
+    "maxTokens": "最大 token 数",
+    "concurrency": "并发",
+    "startContext": "解码起始上下文",
+    "emptyContext": "空",
+    "promptTypes": "提示类型",
+    "prefillSizes": "预填充上下文长度",
+    "qualityProfile": "质量配置",
+    "qualityDefault": "默认套件",
+    "qualityDefaultHelp": "只有短提示：问答、推理、算术、状态跟踪、GSM8K 和 MMLU-Pro。温度固定为 0。",
+    "qualityLong": "默认 + 16k 回忆",
+    "qualityLongHelp": "默认套件再加上 16k 的长上下文回忆。这个总分不与默认套件的运行配对。",
+    "toolProfile": "工具评测配置",
+    "run": "运行组合评测",
+    "stop": "本项基准结束后停止",
+    "stopHelp": "停止不会取消已经在跑的基准测试。这项组合评测里后面的基准不会再启动。",
+    "runningStage": "当前：{{stage}}",
+    "history": "此 Spark 上的组合评测",
+    "empty": "还没有组合评测。若该 Spark 上已有基准在跑，组合评测会等它结束，而不会把它停掉。",
+    "compare": "比较",
+    "compareA": "组合评测 A",
+    "compareB": "组合评测 B",
+    "notComparable": "这些设置不同，因此摘要数字不会配对。",
+    "headlineCard": "摘要",
+    "decodeAtOne": "并发 ×1 的解码合计",
+    "prefillAt": "最大上下文的预填充",
+    "qualityOverall": "质量总分",
+    "toolScore": "工具评测分数",
+    "delta": "B − A",
+    "sideA": "A",
+    "sideB": "B",
+    "unknownModel": "未知模型",
+    "toks": "tok/s",
+    "stageNow": "进行中",
+    "stageDone": "已启动",
+    "stageWaiting": "等待",
+    "leftRunning": "{{stage}}没有正常结束。它没有被取消，后面的基准也没有启动。",
+    "contact": "失去联系（{{message}}）。已经启动的基准测试仍在运行。",
+    "stage": {
+      "waiting": "等待",
+      "decode": "解码",
+      "prefill": "预填充",
+      "quality": "质量",
+      "tool-eval": "工具评测"
+    },
+    "prompt": {
+      "structured": "结构化",
+      "prose": "散文",
+      "code": "代码",
+      "json": "JSON"
+    },
+    "tool": {
+      "short": "短程（15 个场景）",
+      "regular": "常规（69 个场景）",
+      "regular-hard": "常规 + 困难（92 个场景）",
+      "hard": "仅困难模式（23 个场景）"
+    },
+    "toolHelp": {
+      "short": "15 个核心场景。适合快速检查，分数刻度与常规不同。",
+      "regular": "完整标准套件。这是要留下来的分数。",
+      "regular-hard": "标准套件加上困难模式。",
+      "hard": "只有困难模式场景。适合已经通过常规套件的构建。"
+    },
+    "status": {
+      "running": "运行中",
+      "completed": "已完成",
+      "failed": "失败",
+      "stopped": "已停止"
+    },
+    "busy": {
+      "decode": "此 Spark 上已有解码基准在运行，组合评测没有动它。",
+      "prefill": "此 Spark 上已有预填充基准在运行，组合评测没有动它。",
+      "quality": "此 Spark 上已有质量基准在运行，组合评测没有动它。",
+      "toolEval": "此 Spark 上已有工具评测在运行，组合评测没有动它。",
+      "install": "此 Spark 正在安装工具评测，组合评测没有启动。"
+    },
+    "diff": {
+      "decodeThinking": "解码思考开关",
+      "decodeTemperature": "解码温度",
+      "decodeConcurrency": "解码并发",
+      "decodeContext": "解码起始上下文",
+      "decodePrompts": "解码提示类型",
+      "decodeMaxTokens": "解码最大 token 数",
+      "prefillContext": "预填充上下文长度",
+      "qualityProfile": "质量配置",
+      "toolProfile": "工具评测配置"
+    }
   }
 }

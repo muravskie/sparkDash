@@ -11,6 +11,7 @@
     "prefill": { "label": "Prefill", "blurb": "Prompt processing speed and time to first token across context sizes." },
     "quality": { "label": "Quality", "blurb": "A fixed, seeded quality suite to compare models, quantisations and KV-cache formats.", "tab": "Suite" },
     "toolEval": { "label": "Tool Eval Bench", "blurb": "Tool-calling quality across 69 deterministic scenarios (selection, parameters, multi-step, safety).", "family": "Tool Eval Bench" },
+    "campaign": { "label": "Campaign", "blurb": "Decode, prefill, quality, and tool-eval in one pass, with one shared setup." },
     "qualityCompare": {
       "label": "Quality compare",
       "blurb": "Any two saved quality runs side by side, from any units: where one build is better, in plain words and in numbers.",
@@ -147,5 +148,99 @@
     "loading": "Loading both runs…",
     "emptyTitle": "Nothing to compare yet",
     "emptyBody": "Pick a run under test and a reference. When A's model family has a pinned reference, B is filled in for you."
+  },
+  "campaign": {
+    "presets": "Presets",
+    "headline": "Headline",
+    "detailed": "Detailed",
+    "custom": "Custom settings. A campaign only pairs with another that uses the same knobs.",
+    "thinking": "Thinking",
+    "temperature": "Temperature",
+    "maxTokens": "Max tokens",
+    "concurrency": "Concurrency",
+    "startContext": "Decode start context",
+    "emptyContext": "Empty",
+    "promptTypes": "Prompt types",
+    "prefillSizes": "Prefill context sizes",
+    "qualityProfile": "Quality profile",
+    "qualityDefault": "Default suite",
+    "qualityDefaultHelp": "Short prompts only: QA, reasoning, arithmetic, state tracking, GSM8K, and MMLU-Pro. Temperature stays 0.",
+    "qualityLong": "Default + 16k recall",
+    "qualityLongHelp": "The default suite plus long-context recall at 16k. That overall is not paired with a default-suite run.",
+    "toolProfile": "Tool Eval profile",
+    "run": "Run campaign",
+    "stop": "Stop after this benchmark",
+    "stopHelp": "Stop does not cancel the benchmark that is already running. Later benchmarks in this campaign do not start.",
+    "runningStage": "Now: {{stage}}",
+    "history": "Campaigns on this Spark",
+    "empty": "No campaigns yet. A run keeps the benchmark that is already going and waits until that Spark is free.",
+    "compare": "Compare",
+    "compareA": "Campaign A",
+    "compareB": "Campaign B",
+    "notComparable": "These settings differ, so the headlines are not paired.",
+    "headlineCard": "Headline",
+    "decodeAtOne": "Decode aggregate at ×1",
+    "prefillAt": "Prefill at the largest context",
+    "qualityOverall": "Quality overall",
+    "toolScore": "Tool Eval score",
+    "delta": "B − A",
+    "sideA": "A",
+    "sideB": "B",
+    "unknownModel": "Unknown model",
+    "toks": "tok/s",
+    "stageNow": "running",
+    "stageDone": "started",
+    "stageWaiting": "waiting",
+    "leftRunning": "{{stage}} did not finish cleanly. It was not cancelled, and the later benchmarks did not start.",
+    "contact": "Lost contact ({{message}}). A benchmark that had already started was left running.",
+    "stage": {
+      "waiting": "Waiting",
+      "decode": "Decode",
+      "prefill": "Prefill",
+      "quality": "Quality",
+      "tool-eval": "Tool Eval"
+    },
+    "prompt": {
+      "structured": "Structured",
+      "prose": "Prose",
+      "code": "Code",
+      "json": "JSON"
+    },
+    "tool": {
+      "short": "Short (15 scenarios)",
+      "regular": "Regular (69 scenarios)",
+      "regular-hard": "Regular + Hard (92 scenarios)",
+      "hard": "Hard mode only (23 scenarios)"
+    },
+    "toolHelp": {
+      "short": "The 15 core scenarios. A fast check, on its own scale.",
+      "regular": "The full standard suite. This is the score to keep.",
+      "regular-hard": "The standard suite plus Hard Mode.",
+      "hard": "Only the Hard Mode scenarios. For builds that already pass the regular suite."
+    },
+    "status": {
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "stopped": "Stopped"
+    },
+    "busy": {
+      "decode": "A decode benchmark is already running on this Spark. It was left running.",
+      "prefill": "A prefill benchmark is already running on this Spark. It was left running.",
+      "quality": "A quality benchmark is already running on this Spark. It was left running.",
+      "toolEval": "A tool-eval run is already going on this Spark. It was left running.",
+      "install": "Tool Eval is installing on this Spark. The campaign did not start."
+    },
+    "diff": {
+      "decodeThinking": "Decode thinking",
+      "decodeTemperature": "Decode temperature",
+      "decodeConcurrency": "Decode concurrency",
+      "decodeContext": "Decode start context",
+      "decodePrompts": "Decode prompt types",
+      "decodeMaxTokens": "Decode max tokens",
+      "prefillContext": "Prefill context sizes",
+      "qualityProfile": "Quality profile",
+      "toolProfile": "Tool Eval profile"
+    }
   }
 }
