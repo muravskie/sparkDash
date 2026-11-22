@@ -1,3 +1,5 @@
+import type { EnergyPricePeriod } from "../shared/energyTariff";
+
 // ─── Spark config (matches server/sparks.json) ────────────
 export interface SparkConfig {
   id: string;
@@ -99,6 +101,11 @@ export interface SparkConfig {
    * Report tailnet presence via `tailscale status --json` (default false; all roles).
    */
   tailscaleMonitoring?: boolean;
+  /**
+   * Show the display-carveout card: what spark-attic does with the GB10's
+   * display carveout and how much of it is lent (default false; Linux Sparks).
+   */
+  atticMonitoring?: boolean;
   /** When true, storage is only updated on manual refresh, not auto-polled. */
   storagePollDisabled?: boolean;
 }
@@ -412,10 +419,25 @@ export interface CpuMetrics {
 }
 
 // ─── RAM metrics ─────────────────────────────────────────
+export type MacMemoryPressure = "normal" | "warning" | "critical" | "unknown";
+
+/** Disjoint physical RAM slices in MiB; GPU allocations belong within these slices. */
+export interface MacPhysicalMemory {
+  apps: number;
+  wired: number;
+  compressed: number;
+  cached: number;
+  free: number;
+  other: number;
+}
+
 export interface RamMetrics {
   used: number;
   total: number;
   percentage: number;
+  physical?: MacPhysicalMemory | null;
+  memoryPressure?: MacMemoryPressure;
+  swap?: { total: number; used: number; free: number };
 }
 
 // ─── Storage metrics ─────────────────────────────────────
@@ -513,9 +535,13 @@ export interface UnifiedMemoryMetrics {
   used: number;
   available: number;
   percentage: number;
-  oomRisk: "low" | "medium" | "high";
+  oomRisk: "low" | "medium" | "high" | null;
+  memoryPressure?: MacMemoryPressure;
+  physical?: MacPhysicalMemory | null;
+  swap?: { total: number; used: number; free: number };
   bandwidth: {
-    current: number;
+    /** GB/s; null when the local unit's dmon read failed or is unsupported (not measured). */
+    current: number | null;
     peak: number;
   };
 }
@@ -529,7 +555,7 @@ export interface LlmMetrics {
   measurementValid?: boolean;
   /** Why the last poll's stats could not be read; null while they can. */
   measurementError?: string | null;
-  backend: "vllm" | "llama.cpp" | "sglang" | "lmstudio" | "ollama" | "ds4" | "exl3" | "q27" | "tensorfold" | "freetoken" | "radiance" | "strata" | "flare" | "locals" | "splash" | "pico" | null;
+  backend: "vllm" | "llama.cpp" | "sglang" | "lmstudio" | "ollama" | "ds4" | "exl3" | "q27" | "tensorfold" | "freetoken" | "radiance" | "strata" | "flare" | "locals" | "splash" | "pico" | "ignis" | null;
   /** How the monitor reaches the engine: its own address, or an SSH forward when only SSH gets there. */
   via?: "direct" | "ssh-tunnel";
   modelId: string | null;
@@ -793,6 +819,9 @@ export interface ComfyLastJob {
 export interface ComfyModelsInstalled {
   checkpoints: string[];
   loras: string[];
+  diffusionModels?: string[];
+  textEncoders?: string[];
+  vae?: string[];
 }
 
 export interface ComfyMetrics {
@@ -842,6 +871,71 @@ export interface TailscaleMetrics {
   error: string | null;
 }
 
+/** attic.service's state on the unit; nulls when systemd could not be asked. */
+export interface AtticUnit {
+  /** false: not installed. */
+  present: boolean | null;
+  /** true while it runs, false when stopped or failed, null while it starts or stops. */
+  active: boolean | null;
+  /** systemd's ActiveState ("active", "inactive", "failed", …) or "not installed". */
+  state: string | null;
+}
+
+/**
+ * spark-attic's keyless status file. The numbers are set only while it is
+ * fresh (status "ready" or "refusing"): a stale file says nothing about what
+ * is lent now.
+ */
+export interface AtticStatus {
+  /**
+   * ready / refusing: atticd's own state. stale: not rewritten for three of its
+   * periods (atticd is not running). unreadable: no permission, or not a
+   * spark-attic status file. unknown: no clock reading to judge it by.
+   */
+  status: "ready" | "refusing" | "stale" | "unreadable" | "unknown";
+  /** Why atticd refuses, or why the file could not be read. */
+  why: string | null;
+  version: string | null;
+  driver: string | null;
+  /** "heap" or "list". */
+  mode: string | null;
+  /** The running driver's build is validated for this mode. */
+  validated: boolean | null;
+  validatedAt: string | null;
+  sizeMib: number | null;
+  freeMib: number | null;
+  largestMib: number | null;
+  lentMib: number | null;
+  /** Given back by clients, not yet free (CUDA may still map it). */
+  drainingMib: number | null;
+  clients: number | null;
+  /** Seconds since atticd last wrote the file, by the unit's own clock. */
+  ageS: number | null;
+  everyS: number | null;
+}
+
+/**
+ * What spark-attic does on the unit. lending: atticd lends (`attic.lentMib`
+ * of `attic.sizeMib`). refusing: it lends nothing, `attic.why` says why.
+ * unvalidated: it lends nothing until the running driver is validated. off:
+ * attic.service is stopped or failed. not installed: no attic.service and no
+ * status file. unknown: the probe failed, or its answer cannot be trusted (a
+ * stale or unreadable status file, no clock, no systemd, a unit that runs
+ * without its file).
+ */
+export type AtticState = "lending" | "refusing" | "unvalidated" | "off" | "not installed" | "unknown";
+
+export interface AtticMetrics {
+  /** True when the probe ran and its output was understood. */
+  available: boolean;
+  state: AtticState;
+  /** spark-attic's status file; null when there is none. */
+  attic: AtticStatus | null;
+  /** attic.service, atticd's unit. */
+  atticd: AtticUnit;
+  error: string | null;
+}
+
 // ─── Full metrics snapshot ────────────────────────────────
 export interface SparkMetrics {
   gpu: GpuMetrics | null;
@@ -860,6 +954,8 @@ export interface SparkMetrics {
   comfy?: ComfyMetrics | null;
   /** Tailnet probe result when monitoring is enabled; null when off or not yet polled. */
   tailscale?: TailscaleMetrics | null;
+  /** Display-carveout probe result when monitoring is enabled; null when off or not yet polled. */
+  attic?: AtticMetrics | null;
   /**
    * Mac-agent units: model runtimes detected on the machine. null for other
    * transports (DGX Sparks, macs read over SSH) — an empty array only when the
@@ -1016,6 +1112,8 @@ export interface SparkSnapshot {
   comfyPort?: number;
   /** Whether tailnet presence is probed (opt-in; all roles) */
   tailscaleMonitoring?: boolean;
+  /** Whether the display carveout is probed (opt-in; Linux Sparks) */
+  atticMonitoring?: boolean;
   /** Hermes Agent update monitoring state (present in every snapshot). */
   hermes?: HermesStatus;
   hardware: HardwareInfo;
@@ -1155,7 +1253,14 @@ export interface FleetEnergy {
   coverage31dWindowMs?: number;
   nodeCoverage24hMs: Record<string, number>;
   nodeCoverage31dMs: Record<string, number>;
+  /**
+   * Mean watts per hour of the reporting series: the sum over the machines that reported,
+   * so one sleeping unit no longer blanks the slot. Falls back to the full-fleet series on
+   * records written before it existed.
+   */
   hourlyWatts24h: Array<number | null>;
+  /** How many nodes each hourly figure was summed over (null = no data in that slot). */
+  hourlyReportingNodeCount24h?: Array<number | null>;
   /** Wall power from external meters; present only while power meters are configured. */
   wall?: FleetWallEnergy;
 }
@@ -1190,6 +1295,8 @@ export interface FleetWallEnergy {
   nodeCoverage24hMs: Record<string, number>;
   nodeCoverage31dMs: Record<string, number>;
   hourlyWatts24h: Array<number | null>;
+  /** Absent on wall power: its fleet series stays full-fleet only. */
+  hourlyReportingNodeCount24h?: Array<number | null>;
 }
 
 // ─── API responses ────────────────────────────────────────
@@ -1268,6 +1375,10 @@ export interface Settings {
   energyPricePerKwh: number | null;
   /** Currency symbol shown with cost estimates. */
   energyCurrency: string;
+  /** "tou": the hours in energyPricePeriods have their own price; other hours cost energyPricePerKwh. */
+  energyPriceMode?: "flat" | "tou";
+  /** Time-of-use periods (whole local hours [from, to), wrapping past midnight when from > to). */
+  energyPricePeriods?: EnergyPricePeriod[];
   /**
    * VRAM bars split by engine / system / free and judged by headroom. On by
    * default (server DEFAULTS and the UI's pre-load fallback both say true).
@@ -2443,6 +2554,16 @@ export interface EnergyHistoryRow {
   avgWatts: number | null;
   fleetEnergyWh: number;
   fleetCoverageMs: number;
+  /**
+   * The series the charts draw: energy summed over the nodes reporting in each minute, so an
+   * hour with one unit asleep still has a value. Older records fall back to the full-fleet
+   * figures above.
+   */
+  avgReportingWatts?: number | null;
+  reportingEnergyWh?: number;
+  reportingCoverageMs?: number;
+  /** Fewest nodes the reporting series covered in this hour (null = no reporting data). */
+  reportingNodeCount?: number | null;
   outputTokens: number;
   coveredOutputTokens: number;
   // ── Optional, present only in hours that have them ──
@@ -2497,6 +2618,8 @@ export interface MonthlyEnergyMonth {
   outputTokens: number;
   coveredOutputTokens: number;
   whPerOutputToken: number | null;
+  /** From this instant on, every node's energy is also kept per hour (hourWh). Absent for months from before hourly records. */
+  binnedFromMs?: number;
   // ── Present only in months with wall power (measured or filled) ──
   totalWallWh?: number;
   totalWallFilledWh?: number;
@@ -2518,6 +2641,10 @@ export interface MonthlyEnergyNode {
   wallMeteredMs?: number;
   wallFilledWh?: number;
   wallFilledMs?: number;
+  /** Wh per UTC hour of the month, index 0 = its first hour; trailing empty hours left out. */
+  hourWh?: number[];
+  /** The same for wall power, filled time included. */
+  wallHourWh?: number[];
 }
 
 export interface MonthlyEnergy {
@@ -2951,6 +3078,43 @@ export interface StorageEntry {
    * a scan stopped early, or nothing readable.
    */
   modifiedAt?: number;
+}
+
+/** Remove agent junk: where an item came from, as the dashboard groups it. */
+export type AgentJunkGroup = "worktrees" | "temp" | "sessions" | "editors" | "scratch" | "caches";
+/** The smart guess: junk (ticked by Smart pick), likely, review (check first) or keep. */
+export type AgentJunkVerdict = "junk" | "likely" | "review" | "keep";
+
+export interface AgentJunkSignal {
+  /** age, recent, age-unknown, untracked, no-git, home-root, uncommitted, memory, tests-folder, worktree-session, current-version, size-partial */
+  code: string;
+  days?: number;
+}
+
+export interface AgentJunkItem {
+  path: string;
+  name: string;
+  type: "d" | "f";
+  /** Null when it could not be measured in time. */
+  bytes: number | null;
+  /** Newest change of anything in it, seconds since 1970 by the unit's clock; null when not known. */
+  modifiedAt: number | null;
+  rule: string;
+  group: AgentJunkGroup;
+  agent: string;
+  verdict: AgentJunkVerdict;
+  score: number;
+  signals: AgentJunkSignal[];
+}
+
+export interface AgentJunkResult {
+  checkedAt: number;
+  home: string | null;
+  git: "ok" | "missing";
+  /** Every home folder was looked through in time and nothing was left out. */
+  complete: boolean;
+  more: boolean;
+  items: AgentJunkItem[];
 }
 
 export interface StorageScanRequest extends StorageElevation {

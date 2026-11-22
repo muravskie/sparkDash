@@ -2,6 +2,7 @@ import { act, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, deleteStoragePath, fetchDockerStorage, fetchStorageFolders, fetchStorageScan, fetchStorageStatus, removeDockerContainers, removeDockerImages, startStorageScan, forgetStorageSudo } from "../../api/client";
 import type { DockerStorage, SparkSnapshot, StorageEntry, StorageScanSnapshot, StorageStatus } from "../../api/types";
+import { setLocale } from "../../i18n";
 import { flush, render } from "../../testing/render";
 import { makeSpark } from "../../testing/fixtures";
 import { DeleteDialog, type DeleteTarget } from "./DeleteDialog";
@@ -86,8 +87,32 @@ beforeEach(() => {
 });
 
 describe("StoragePage", () => {
-  it("offers Sparks only, shows their disks, and starts at the question 'what to look at'", async () => {
-    const host = { ...makeSpark("pc"), kind: "host" as const, name: "Gaming PC" };
+  it("switches Storage labels in place while keeping the chosen Spark and file path", async () => {
+    window.history.replaceState(null, "", "/storage?spark=s1&tab=files");
+    vi.mocked(fetchStorageStatus).mockResolvedValue({ ...STATUS, homeDir: "/home/me" });
+    render(<StoragePage sparks={[makeSpark("s1")]} />);
+    await flush();
+    const route = window.location.href;
+    const path = () => [...document.querySelectorAll(".st-choice__path")].map((entry) => entry.textContent);
+
+    expect(text()).toContain("Storage Manager");
+    expect(path()).toContain("/home/me");
+    try {
+      await act(async () => setLocale("zh-CN"));
+      expect(document.querySelector("h1")?.textContent).toBe("存储管理");
+      expect(byLabel("选择要分析的节点").querySelector('[aria-checked="true"]')?.textContent).toContain("Spark s1");
+      expect(text()).toContain("文件和文件夹");
+      expect(byLabel("主磁盘")).not.toBeNull();
+      expect(window.location.href).toBe(route);
+      expect(path()).toContain("/home/me");
+    } finally {
+      await act(async () => setLocale("en"));
+    }
+    expect(text()).toContain("Storage Manager");
+  });
+
+  it("offers Linux units, shows their disks, and starts at the question 'what to look at'", async () => {
+    const host = { ...makeSpark("pc"), kind: "host" as const, platform: "windows" as const, name: "Gaming PC" };
     render(<StoragePage sparks={[makeSpark("s1"), host]} />);
     await flush();
     expect(text()).toContain("Storage Manager");
@@ -173,10 +198,20 @@ describe("StoragePage", () => {
     expect(document.body.querySelector(".st-picker__chosen")?.textContent).toContain("/");
   });
 
-  it("says so when there is no Spark at all", async () => {
-    render(<StoragePage sparks={[{ ...makeSpark("pc"), kind: "host" }]} />);
+  it("offers a Linux GPU host and loads its storage", async () => {
+    render(<StoragePage sparks={[{ ...makeSpark("gpu"), kind: "host", platform: "linux", name: "GPU Box" }]} />);
     await flush();
-    expect(text()).toContain("No DGX Spark to look at");
+    expect(text()).toContain("GPU Box");
+    expect(fetchStorageStatus).toHaveBeenCalledWith("gpu");
+  });
+
+  it("shows the empty state when only Windows and macOS units are configured", async () => {
+    render(<StoragePage sparks={[
+      { ...makeSpark("pc"), kind: "host", platform: "windows" },
+      { ...makeSpark("mac"), kind: "mac", platform: "darwin" },
+    ]} />);
+    await flush();
+    expect(text()).toContain("No Linux units available");
     expect(fetchStorageStatus).not.toHaveBeenCalled();
   });
 

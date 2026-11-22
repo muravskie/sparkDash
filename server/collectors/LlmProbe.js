@@ -18,6 +18,13 @@ const TUNNEL_DROP_AFTER_FAILURES = 5;
 const TUNNEL_RETRY_MIN_MS = 60_000;
 const TUNNEL_RETRY_MAX_MS = 15 * 60_000;
 const REDETECT_INTERVAL_MS = 60_000;
+/**
+ * Longest gap between two ignis counter reads that still yields a rate. A unit's ports are
+ * probed as one round that waits for its slowest port, so a stopped engine on another port
+ * that times out stretches every round to about 10 s; the delta over the real elapsed time
+ * is still the true average rate, and a 10 s cut-off would discard nearly every sample.
+ */
+const IGNIS_MAX_SAMPLE_GAP_SEC = 30;
 /** How long a vLLM `/version` answer is reused before it is asked for again. */
 const ENGINE_VERSION_TTL_MS = 10 * 60_000;
 
@@ -57,7 +64,7 @@ const TENSORFOLD_CACHED_PROMPT_COUNTERS = [
   "prefix_cache_hits_total",
 ];
 /** owned_by values that are exactly an engine's own name (each is also its backend type). */
-const OWNED_BY_ENGINES = new Set(["locals", "splash", "tensorfold", "ds4", "sglang", "exl3", "q27", "freetoken", "radiance", "ninfer"]);
+const OWNED_BY_ENGINES = new Set(["locals", "splash", "tensorfold", "ds4", "sglang", "exl3", "q27", "freetoken", "radiance", "ninfer", "ignis"]);
 /** Current SGLang names first. Deprecated aliases still work but log a warning per hit. */
 const SGLANG_SERVER_INFO_PATHS = ["/server_info", "/get_server_info"];
 const SGLANG_MODEL_INFO_PATHS = ["/model_info", "/get_model_info"];
@@ -334,6 +341,8 @@ export class LlmProbe {
     this._localsBase = null;
     /** Splash: the last scrape's decode and prefill counters; null until one is read. */
     this._splashBase = null;
+    /** ignis: the last scrape's emitted-token counter; null until one is read. */
+    this._ignisBase = null;
 
     this._consecutiveFailures = 0;
     this._lastDetectAt = 0;
@@ -600,6 +609,7 @@ export class LlmProbe {
     this._seedNext = false;
     this._localsBase = null;
     this._splashBase = null;
+    this._ignisBase = null;
     this.slotState.clear();
     this._mlxServeLive = null;
     this.lastTokenCounts = { input: 0, output: 0 };
@@ -705,7 +715,8 @@ export class LlmProbe {
       this.backendType !== "freetoken" &&
       this.backendType !== "radiance" &&
       this.backendType !== "flare" &&
-      this.backendType !== "pico"
+      this.backendType !== "pico" &&
+      this.backendType !== "ignis"
     ) {
       const slotUrl = `${this.baseUrl}/slots`;
       try {
@@ -808,6 +819,8 @@ export class LlmProbe {
       if (/tensorfold/i.test(ownedBy)) return "tensorfold";
       // ninfer reports owned_by: "ninfer" and serves ninfer_* Prometheus series on /metrics.
       if (/ninfer/i.test(ownedBy)) return "ninfer";
+      // ignis (gpillon/ignis) reports owned_by: "ignis" and serves ignis_* series on /ui/metrics.
+      if (/^ignis$/i.test(ownedBy)) return "ignis";
       // FreeToken reports owned_by: "FreeToken".
       if (/freetoken/i.test(ownedBy)) return "freetoken";
       // Radiance (native RDNA engine) reports owned_by: "radiance" and serves vLLM-format /metrics.
@@ -1031,6 +1044,7 @@ export class LlmProbe {
     let flareCard = false;
     let flareInfo = null;
     let servedModelId = null;
+    let decodeLanes = null;
     this.models = [];
     try {
       const modelsRes = await this._fetch(`${this.baseUrl}/v1/models`);
@@ -1057,6 +1071,8 @@ export class LlmProbe {
         this.contextLength =
           model?.max_model_len ?? model?.context_length ?? null;
         owned = model?.owned_by;
+        // ignis: concurrent decode lanes of the loaded model (its request slots).
+        decodeLanes = LlmProbe._positiveNumber(model?.decode_lanes);
         flareCard = LlmProbe._modelsLookLikeFlare(validModels);
         flareInfo = flareCard ? model.flare : null;
       }
@@ -1081,6 +1097,8 @@ export class LlmProbe {
         this.backendType = "pico";
       } else if (/ninfer/i.test(owned) && this.backendType !== "ds4") {
         this.backendType = "ninfer";
+      } else if (/^ignis$/i.test(owned) && this.backendType !== "ds4") {
+        this.backendType = "ignis";
       } else if (/freetoken/i.test(owned) && this.backendType !== "ds4") {
         this.backendType = "freetoken";
       } else if (/radiance/i.test(owned) && this.backendType !== "ds4") {
@@ -1128,6 +1146,21 @@ export class LlmProbe {
     // per-pool KV-cache ratios and spec-decode draft/accepted counters per position.
     if (this.backendType === "ninfer") {
       await this._applyNinferMetrics(dtSec);
+      return this._getSnapshot();
+    }
+
+    // ignis: its Prometheus text is at /ui/metrics on the API port (the engine's own /metrics
+    // listener is a separate loopback port). The model card names the decode lanes.
+    if (this.backendType === "ignis") {
+      try {
+        const res = await this._fetch(`${this.baseUrl}/ui/metrics`);
+        if (res.ok) this._applyIgnisMetrics(await res.text(), dtSec);
+        else this._markUnmeasured(`metrics endpoint answered ${res.status}`);
+      } catch {
+        this._markUnmeasured("metrics request failed");
+      }
+      this.slotsTotal = decodeLanes != null ? Math.round(decodeLanes) : 0;
+      this.slotsActive = this.requestsRunning != null ? Math.round(this.requestsRunning) : 0;
       return this._getSnapshot();
     }
 
@@ -1342,19 +1375,47 @@ export class LlmProbe {
 
     if (this.backendType === "vllm") await this._refreshEngineVersion();
 
-    // Pico has no live counters. A sample belongs only to the poll that measured
-    // it; replaying it on later polls makes an idle engine look busy forever.
+    // Pico has no live counters of its own… unless the front end is a build that
+    // publishes them: pico-dgx-ds4 >= f36af01 serves `GET /metrics` with
+    // tensorfold:-prefixed counters (Picom-code/pico-dgx-ds4#12), which is the series
+    // set the TensorFold reader below already parses. An older dsfront answers 404
+    // and the branch below behaves exactly as before.
     if (this.backendType === "pico") {
+      // Clear first: a rate left by the previous poll's sample must not be mistaken
+      // for a counter-derived one, and a failed scrape must not keep a stale figure.
       this.generationTps = 0;
-      const liveTps = this._liveDecodeTps?.(this.port);
-      if (Number.isFinite(liveTps) && liveTps >= 0) {
-        this.generationTps = liveTps;
-        this.generationTpsSource = "dashboard-stream";
-        this.decodeActive = liveTps > 0;
+      this.generationTpsSource = null;
+      this.decodeActive = false;
+      this._tensorfoldScrapedCounters = false;
+      await this._applyTensorFoldMetrics(dtSec);
+      // Only this scrape counts: counters seen on an earlier poll say nothing about a failed one.
+      const hadCounters = this._tensorfoldScrapedCounters === true;
+      if (this.generationTps > 0) {
+        // Counter-diff window: real tokens, but it only advances when a request
+        // finishes (this engine publishes no in-flight generation counter), so the
+        // figure is honest and lumpy rather than a smooth live rate.
+        this.generationTpsSource = "window";
+        this.decodeActive = true;
+      } else if (hadCounters) {
+        // The engine publishes counters and produced nothing this window: a measured
+        // zero, not a missing figure. Labelling it "dashboard-stream" would claim a
+        // source that did not measure it.
+        this.generationTpsSource = "window";
+        this.decodeActive = false;
       } else {
-        await this._maybeStreamSample();
-        if (this._liveDecodeTps && this.generationTpsSource == null) {
+        // A sample belongs only to the poll that measured it; replaying it on later
+        // polls makes an idle engine look busy forever.
+        this.generationTps = 0;
+        const liveTps = this._liveDecodeTps?.(this.port);
+        if (Number.isFinite(liveTps) && liveTps >= 0) {
+          this.generationTps = liveTps;
           this.generationTpsSource = "dashboard-stream";
+          this.decodeActive = liveTps > 0;
+        } else {
+          await this._maybeStreamSample();
+          if (this._liveDecodeTps && this.generationTpsSource == null) {
+            this.generationTpsSource = "dashboard-stream";
+          }
         }
       }
     }
@@ -1927,6 +1988,77 @@ export class LlmProbe {
   }
 
   /**
+   * Apply ignis (gpillon/ignis) Prometheus text, served at /ui/metrics on the API port.
+   *
+   * Decode tok/s is the delta of `ignis_decoded_tokens_total`, which counts each token as it
+   * is emitted, so it moves during a long generation; `ignis_generated_tokens_total` only
+   * moves when a request completes and would read 0 until then. ignis publishes no prompt
+   * or prefill token counters, so prefill tok/s and the input side of the token ledger stay
+   * unreported rather than guessed. Samples up to IGNIS_MAX_SAMPLE_GAP_SEC apart are measured.
+   * @param {string} txt
+   * @param {number} dtSec
+   */
+  _applyIgnisMetrics(txt, dtSec) {
+    // A counter is a finite, non-negative number; a series that is absent or malformed is not 0.
+    const counter = (name) => {
+      const v = this._getPromMetric(txt, name);
+      return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+    };
+    const version = /^ignis_build_info\{[^}]*\bversion="([^"]+)"[^}]*\}/m.exec(String(txt || ""));
+    if (version) this.engineVersion = version[1].trim() || this.engineVersion;
+
+    const decoded = counter("ignis_decoded_tokens_total");
+    if (decoded == null) {
+      this._markUnmeasured("metrics had no ignis token counters");
+      return;
+    }
+    const before = this._ignisBase;
+    let why = null;
+    if (this._seedNext) why = "re-seeding counters after an interruption";
+    else if (!before) why = "no earlier sample to measure against";
+    else if (!(dtSec > 0 && dtSec < IGNIS_MAX_SAMPLE_GAP_SEC)) why = "no earlier sample within 30 s to measure against";
+    else if (decoded < before.out) why = "engine counters restarted";
+    this._seedNext = false;
+    this._ignisBase = { out: decoded };
+    if (why) {
+      // No rate on this poll, and it says so; the next one measures against these counters.
+      this._markUnmeasured(why, { reseed: false });
+    } else {
+      this.measurementValid = true;
+      this.measurementError = null;
+      this.generationTps = Math.round(((decoded - before.out) / dtSec) * 100) / 100;
+    }
+    this.totalOutputTokens = decoded;
+
+    // Scheduler gauges are labelled by state.
+    const running = this._getPromMetricLabeled(txt, "ignis_scheduler_requests", "state", "running");
+    const waiting = this._getPromMetricLabeled(txt, "ignis_scheduler_requests", "state", "waiting");
+    this.requestsRunning = running == null ? null : Math.round(running);
+    this.requestsWaiting = waiting == null ? null : Math.round(waiting);
+
+    // KV pool: pages reserved by running requests and retained (cached) conversations.
+    const poolPages = counter("ignis_kv_pool_pages");
+    const usedPages = counter("ignis_kv_pool_used_pages");
+    const pageBytes = counter("ignis_kv_page_bytes");
+    this.kvCacheUsage = poolPages && usedPages != null ? Math.min(1, Math.max(0, usedPages / poolPages)) : null;
+    this.kvCacheMemoryBytes = poolPages && pageBytes ? Math.round(poolPages * pageBytes) : null;
+    const weightBytes = this._getPromMetricLabeled(txt, "ignis_vram_reserved_bytes", "line", "weights");
+    this.weightsGb = weightBytes ? Math.round((weightBytes / 1e9) * 100) / 100 : null;
+
+    const drafted = counter("ignis_speculative_drafted_tokens_total");
+    const accepted = counter("ignis_speculative_accepted_tokens_total");
+    this.mtpAcceptanceRate =
+      drafted && accepted != null ? Math.round((accepted / drafted) * 10000) / 10000 : null;
+
+    const ttftHist = this._parseHistogram(txt, "ignis_request_ttft_seconds", "ignis_request_ttft_seconds_count");
+    const ttftP95 = this._histogramQuantile(ttftHist.buckets, ttftHist.total, 0.95);
+    this.ttftP95Seconds = ttftP95 == null ? null : Math.round(ttftP95 * 1000) / 1000;
+    const e2eHist = this._parseHistogram(txt, "ignis_request_duration_seconds", "ignis_request_duration_seconds_count");
+    const e2eP95 = this._histogramQuantile(e2eHist.buckets, e2eHist.total, 0.95);
+    this.e2eP95Seconds = e2eP95 == null ? null : Math.round(e2eP95 * 1000) / 1000;
+  }
+
+  /**
    * Apply EXL3 tools/serve_openai.py GET /health.
    * Live tok/s from cumulative counter diffs so idle → 0.
    * @param {Record<string, unknown>} data
@@ -2299,6 +2431,14 @@ export class LlmProbe {
     if (Number.isFinite(conns) && conns >= 0 && this.requestsRunning == null) {
       this.requestsRunning = Math.round(conns);
       this.slotsActive = Math.round(conns);
+    }
+    // A build that publishes `live` and no `streams` block (this engine) leaves prefillActive to
+    // the streams field, so a long prompt pass reads as "not measured live" for minutes while the
+    // GPU is pegged. An open connection that is decoding nothing is a prompt pass; the vLLM path
+    // already marks prefill the same way (running > 0 and no new output). An idle but still-open
+    // connection reads the same way: it shows as a prompt pass until the connection closes.
+    if (data.streams == null && Number.isFinite(conns) && conns > 0 && decode === 0) {
+      this.prefillActive = true;
     }
   }
 
@@ -2682,6 +2822,7 @@ export class LlmProbe {
       // tokens of an in-flight request. The rate fallback below keeps `produced`.
       this.generationProgressTokens =
         Number.isFinite(inFlight) && inFlight >= 0 ? produced : null;
+      this._tensorfoldScrapedCounters = true;
       const prev = this._tensorfoldPromProduced;
       this._tensorfoldPromProduced = produced;
       if (!preserveLiveDecode && prev != null && Number.isFinite(dtSec) && dtSec > 0) {
@@ -4077,13 +4218,14 @@ export class LlmProbe {
       modelId: this.models.length > 1 ? this.models[0] : this.modelId || null,
       modelPath: this.modelPath || null,
       /**
-       * Only vLLM and TensorFold report a version we read today; other backends stay null.
+       * Only vLLM, TensorFold and ignis report a version we read today; other backends stay null.
        * A probe that is no longer measuring (the endpoint closed, or an API key was added so
        * authOpen is false) must not keep presenting the version it last read, for the same
        * reason `models` is cleared below.
        */
       engineVersion:
-        metricsLive && (this.backendType === "vllm" || this.backendType === "tensorfold")
+        metricsLive &&
+        (this.backendType === "vllm" || this.backendType === "tensorfold" || this.backendType === "ignis")
           ? this.engineVersion
           : null,
       models: metricsLive ? [...this.models] : [],
