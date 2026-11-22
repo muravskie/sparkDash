@@ -83,15 +83,16 @@ describe("ModelsPage", () => {
         ok: true,
         json: async () => board({
           active: "op1",
-          operations: [{ id: "op1", model_id: "qwen3.8-27b", action: "activate", state: "unknown", error: "Review the controller", result: null, acknowledged: false }],
-          events: [{ model_id: "qwen3.8-27b", operation: "activate", phase: "stopping", transaction_id: "txn-1" }],
+          operations: [{ id: "op1", model_id: "qwen3.8-27b", action: "activate", state: "unknown", error: "Review the controller", result: { transaction_id: "txn-1", status: "accepted" }, acknowledged: false, started_at: "2026-11-22T16:17:44.173Z" }],
+          events: [{ model_id: "qwen3.8-27b", operation: "activate", phase: "stopping", transaction_id: "txn-1", timestamp: "2026-11-22T16:17:44.173Z" }],
         }),
       }))
     );
     const { container } = render(<ModelsPage sparks={[makeSpark("a")]} />);
     await flush();
     expect(container.textContent).toContain("unknown");
-    expect(container.textContent).toContain("txn-1");
+    expect(container.textContent).toContain(new Date("2026-11-22T16:17:44.173Z").toLocaleString());
+    expect(container.textContent).not.toContain("txn-1");
     expect(container.textContent).toContain("Acknowledge after review");
     const activate = [...container.querySelectorAll("button")].find((button) => button.textContent === "Activate") as HTMLButtonElement;
     expect(activate.disabled).toBe(true);

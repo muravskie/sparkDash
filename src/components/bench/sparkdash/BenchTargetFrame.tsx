@@ -101,6 +101,7 @@ export interface BenchTargetProps {
   contextLength: number | null;
   remoteTarget: LlmBenchTarget | null;
   engine: string | null;
+  engineVersion: string | null;
   posture: { label: string; level: "ok" | "warn" | "danger" } | null;
   shareImage: boolean;
   /** Live generation tok/s from the monitor; null for a Remote target. */
@@ -268,6 +269,7 @@ export function BenchTargetFrame({
     contextLength: useRemote ? null : (llm?.contextLength ?? null),
     remoteTarget: providerPick ? null : useRemote ? remote.target : null,
     engine: selectedProvider ? providerId : useRemote ? null : (llm?.backend ?? null),
+    engineVersion: selectedProvider || useRemote ? null : (llm?.engineVersion ?? null),
     posture: useRemote ? null : (llm?.posture ?? null),
     shareImage: benchShareImage,
     liveTps: useRemote ? null : measuredGenerationTps(llm),

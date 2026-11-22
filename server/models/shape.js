@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 /** Phases that close a controller transaction. Matches model-controller recovery. */
 export const TERMINAL_PHASES = new Set([
   "committed",
@@ -33,13 +35,70 @@ export function healthOf(healthy) {
 }
 
 /**
- * @param {unknown} probes
- * @param {number | null} port
+ * Engine label for a monitor that is not a registry profile. Registry rows
+ * never borrow this: several profiles can share one port, and the process
+ * bound there belongs to only one of them.
+ *
+ * @param {object | null | undefined} probe
  */
-function engineFromProbe(probes, port) {
-  if (!port || !Array.isArray(probes)) return null;
-  const row = probes.find((probe) => Number(probe?.port) === port);
-  return typeof row?.backend === "string" && row.backend ? row.backend : null;
+const REGISTRY_PATHS = [
+  process.env.SMC_REGISTRY,
+  "/etc/spark-model-controller/models.yaml",
+  "/host/root/etc/spark-model-controller/models.yaml",
+  "/host/root/home/fedor/code/model-controller/config/models.yaml",
+].filter((path) => typeof path === "string" && path);
+
+let registryCache = { at: 0, map: new Map() };
+
+/**
+ * Engine strings declared in the controller registry. Status is authoritative
+ * once the running controller publishes `engine`; this only fills profiles
+ * the installed controller has not started naming yet.
+ *
+ * @param {string} text
+ * @returns {Map<string, string>}
+ */
+export function enginesFromRegistryText(text) {
+  const map = new Map();
+  let id = "";
+  for (const line of String(text).split("\n")) {
+    const idMatch = line.match(/^- id:\s*(\S+)\s*$/);
+    if (idMatch) {
+      id = idMatch[1];
+      continue;
+    }
+    const engineMatch = line.match(/^ {2}engine:\s*(.+?)\s*$/);
+    if (!engineMatch || !id || map.has(id)) continue;
+    const engine = engineMatch[1].replace(/^["']|["']$/g, "").trim();
+    if (engine) map.set(id, engine);
+  }
+  return map;
+}
+
+function registryEngines() {
+  if (Date.now() - registryCache.at < 30_000) return registryCache.map;
+  const map = new Map();
+  for (const path of REGISTRY_PATHS) {
+    let text = "";
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    for (const [id, engine] of enginesFromRegistryText(text)) {
+      if (!map.has(id)) map.set(id, engine);
+    }
+  }
+  registryCache = { at: Date.now(), map };
+  return map;
+}
+
+function probeEngine(probe) {
+  const backend = typeof probe?.backend === "string" ? probe.backend : "";
+  const version = typeof probe?.engineVersion === "string" ? probe.engineVersion.trim() : "";
+  if (!backend) return version || null;
+  if (!version || backend.includes(version)) return backend;
+  return `${backend} ${version}`;
 }
 
 /**
@@ -50,8 +109,10 @@ function engineFromProbe(probes, port) {
  * @param {object | null | undefined} status
  * @param {unknown[]} [probes]
  * @param {string} [host]
+ * @param {Map<string, string> | null} [engines] Registry engines. Null reads the controller file; a Map skips that.
  */
-export function shapeModels(status, probes = [], host = "") {
+export function shapeModels(status, probes = [], host = "", engines = null) {
+  const known = engines instanceof Map ? engines : registryEngines();
   const raw = Array.isArray(status?.models) ? status.models : [];
   const rows = [];
   const registryPorts = new Set();
@@ -71,7 +132,7 @@ export function shapeModels(status, probes = [], host = "") {
       name: typeof model.name === "string" && model.name ? model.name : model.id,
       endpoint,
       roles: Array.isArray(model.roles) ? model.roles.filter((role) => typeof role === "string") : [],
-      engine: typeof model.engine === "string" && model.engine ? model.engine : engineFromProbe(probes, port),
+      engine: (typeof model.engine === "string" && model.engine.trim()) || known.get(model.id) || null,
       ownership: typeof model.ownership === "string" ? model.ownership : null,
       runtime: typeof model.runtime === "string" && model.runtime ? model.runtime : "absent",
       health: healthOf(model.healthy),
@@ -93,7 +154,7 @@ export function shapeModels(status, probes = [], host = "") {
       name: probe.modelId,
       endpoint: host ? `http://${host}:${port}/v1` : null,
       roles: ["text-generation"],
-      engine: typeof probe.backend === "string" && probe.backend ? probe.backend : null,
+      engine: probeEngine(probe),
       ownership: "external-monitor",
       runtime: "unknown",
       health: healthOf(true),

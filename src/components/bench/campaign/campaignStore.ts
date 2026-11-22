@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from "react";
-import type { CampaignRun } from "./campaign";
+import { dedupeCampaigns, type CampaignRun } from "./campaign";
 
 const STORAGE_KEY = "sparkdash.bench.campaigns";
 const MAX_RUNS = 30;
 
+let trimmed = false;
 let runs: CampaignRun[] = load();
+if (trimmed) save();
 const listeners = new Set<() => void>();
 
 function load(): CampaignRun[] {
@@ -13,7 +15,10 @@ function load(): CampaignRun[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isRun).slice(0, MAX_RUNS);
+    const parsedRuns = parsed.filter(isRun);
+    const next = dedupeCampaigns(parsedRuns).slice(0, MAX_RUNS);
+    trimmed = next.length !== parsedRuns.length;
+    return next;
   } catch {
     return [];
   }
@@ -46,7 +51,7 @@ export function campaignById(id: string): CampaignRun | null {
 }
 
 export function upsertCampaign(run: CampaignRun) {
-  const rest = runs.filter((item) => item.id !== run.id);
+  const rest = runs.filter((item) => item.id !== run.id && !(run.jobs.decode && item.jobs.decode === run.jobs.decode));
   runs = [run, ...rest].slice(0, MAX_RUNS);
   save();
   emit();

@@ -182,14 +182,12 @@ function ModelsBoardView({ spark }: { spark: SparkSnapshot }) {
               <strong>{operation.action} · {operation.model_id}</strong>
               <span className={operation.state === "failed" || operation.state === "unknown" ? "mdls-error" : undefined}>
                 {operation.state === "working" ? "Controller working…" : operation.state}
+                {stampAfter(operation.finished_at || operation.started_at)}
               </span>
-              {operation.result?.transaction_id ? (
-                <span className="mdls-detail mono">{operation.result.status} · Transaction {operation.result.transaction_id}</span>
-              ) : null}
               {operation.error ? <p className="mdls-error">{operation.error}</p> : null}
               {operation.state === "unknown" && !operation.acknowledged ? (
                 <>
-                  <p className="mdls-detail">Review current model status and controller transactions before acknowledging this unresolved result.</p>
+                  <p className="mdls-detail">Review the current model status before acknowledging this unresolved result.</p>
                   <button type="button" onClick={() => void acknowledge(operation.id)}>Acknowledge after review</button>
                 </>
               ) : null}
@@ -206,14 +204,23 @@ function ModelsBoardView({ spark }: { spark: SparkSnapshot }) {
           {board.events.slice(-8).reverse().map((event, index) => (
             <div key={`${event.transaction_id || "event"}-${index}`} className="mdls-op">
               <strong>{event.model_id || "Unknown model"} · {event.operation || "unknown"}</strong>
-              <span>{event.phase || "unknown phase"}</span>
-              <span className="mdls-detail mono">{event.transaction_id || "No transaction id"}</span>
+              <span>
+                {event.phase || "unknown phase"}
+                {stampAfter(event.timestamp)}
+              </span>
             </div>
           ))}
         </section>
       ) : null}
     </div>
   );
+}
+
+function stampAfter(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  const shown = Number.isFinite(ms) ? new Date(ms).toLocaleString() : iso;
+  return ` · ${shown}`;
 }
 
 /** Controller lifecycle for the Spark selected on the benchmark pages. */

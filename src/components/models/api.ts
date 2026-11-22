@@ -27,6 +27,8 @@ export interface ModelOperation {
   error: string | null;
   result: { transaction_id?: string; status?: string } | null;
   acknowledged?: boolean;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface ControllerEvent {
@@ -34,6 +36,7 @@ export interface ControllerEvent {
   operation?: string;
   phase?: string;
   transaction_id?: string;
+  timestamp?: string;
 }
 
 export interface ScriptGuardState {

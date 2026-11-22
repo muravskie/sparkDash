@@ -7,37 +7,38 @@ import { PageCard, PageEmpty, PageLayout } from "../sparkdash/pageParts";
 import {
   CAMPAIGN_CONCURRENCIES,
   CAMPAIGN_DECODE_CONTEXTS,
+  CAMPAIGN_LONG_SIZES,
   CAMPAIGN_PREFILL_SIZES,
   CAMPAIGN_PROMPT_TYPES,
   CAMPAIGN_STAGES,
   asCustom,
   campaignDiffs,
+  campaignEngine,
+  campaignTitle,
   campaignsComparable,
-  configForPreset,
   createCampaign,
-  headlineConfig,
+  engineLabel,
+  registryEngine,
+  fullSweepConfig,
   type CampaignConfig,
   type CampaignDiffField,
-  type CampaignPreset,
   type CampaignRun,
   type CampaignStage,
-  type QualityCampaignProfile,
+  type CampaignView,
   type ToolEvalTemplate,
 } from "./campaign";
+import { CampaignCompare, CampaignReport } from "./campaignReport";
 import { remoteOf } from "./campaignClient";
 import { kickCampaign, requestCampaignStop, resumeRunningCampaigns } from "./campaignSession";
-import { upsertCampaign, useCampaigns } from "./campaignStore";
+import { listDecodeBench, listPrefillBench, listQualityBench, fetchToolEvalRuns } from "../../../api/client";
+import { fetchModels } from "../../models/api";
+import { adoptFinishedCampaign } from "./campaignAdopt";
+import { listCampaigns, upsertCampaign, useCampaigns } from "./campaignStore";
 
 const TOOL_TEMPLATES: ToolEvalTemplate[] = ["short", "regular", "regular-hard", "hard"];
 
 function num(value: number | null): string {
   return value == null ? "—" : value.toFixed(1);
-}
-
-function delta(a: number | null, b: number | null): string {
-  if (a == null || b == null) return "—";
-  const d = b - a;
-  return `${d > 0 ? "+" : ""}${d.toFixed(1)}`;
 }
 
 function toggleNumber(list: number[], value: number): number[] {
@@ -56,36 +57,89 @@ export function CampaignPage({ spark, benchShareImage = false }: { spark: SparkS
 function CampaignBody({ target }: { target: BenchTargetProps }) {
   const { t } = useTranslation("benchmarks");
   const runs = useCampaigns();
-  const [config, setConfig] = useState<CampaignConfig>(() => headlineConfig());
+  const [config, setConfig] = useState<CampaignConfig>(() => fullSweepConfig());
   const [pickA, setPickA] = useState("");
   const [pickB, setPickB] = useState("");
+  const [focusId, setFocusId] = useState("");
+  const [view, setView] = useState<CampaignView>("headline");
+  const [waitingForTool, setWaitingForTool] = useState(false);
 
   useEffect(() => {
     resumeRunningCampaigns();
   }, []);
 
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => {
+      try {
+        const [decode, prefill, quality, tool] = await Promise.all([
+          listDecodeBench(target.sparkId),
+          listPrefillBench(target.sparkId),
+          listQualityBench(target.sparkId),
+          fetchToolEvalRuns(target.sparkId),
+        ]);
+        if (stop) return;
+        const adopted = adoptFinishedCampaign(target.sparkId, {
+          decode: decode.active ? [decode.active, ...decode.history] : decode.history,
+          prefill: prefill.active ? [prefill.active, ...prefill.history] : prefill.history,
+          quality: quality.active ? [quality.active, ...quality.history] : quality.history,
+          tool: tool.runs,
+        });
+        const jobs = quality.active ? [quality.active, ...quality.history] : quality.history;
+        for (const run of listCampaigns()) {
+          if (run.sparkId !== target.sparkId) continue;
+          const record = jobs.find((job) => job.benchId === run.jobs.quality)?.engine?.record;
+          const engine = campaignEngine(run.engine, record);
+          if (engine && engine !== run.engine) upsertCampaign({ ...run, engine });
+        }
+        if (adopted.kind === "ready") {
+          const decodeId = adopted.run.jobs.decode;
+          const already = listCampaigns().some((run) => run.id === adopted.run.id || (decodeId != null && run.jobs.decode === decodeId));
+          if (!already) upsertCampaign(adopted.run);
+          setWaitingForTool(false);
+          return;
+        }
+        setWaitingForTool(adopted.kind === "waiting");
+      } catch {
+        /* the history stays as it was */
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => { void tick(); }, 10000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [target.sparkId]);
+
   const mine = runs.filter((run) => run.sparkId === target.sparkId);
   const active = mine.find((run) => run.status === "running") ?? null;
   const invalid = !configValid(config);
 
-  const applyPreset = (preset: Exclude<CampaignPreset, "custom">) => {
-    setConfig(configForPreset(preset));
-  };
   const edit = (next: CampaignConfig) => setConfig(asCustom(next));
+  const focused = mine.find((run) => run.id === focusId) ?? mine.find((run) => run.status === "completed") ?? mine[0] ?? null;
 
   const start = () => {
     if (active || invalid) return;
     const remote = remoteOf(target.remoteTarget);
-    const run = createCampaign({
-      sparkId: target.sparkId,
-      port: remote.port ?? target.llmPort,
-      modelId: target.modelId,
-      host: remote.host,
-      tls: remote.tls,
-      config,
-    });
-    upsertCampaign(run);
-    kickCampaign(run.id);
+    const port = remote.port ?? target.llmPort;
+    const fallback = engineLabel(target.engine, target.engineVersion);
+    void fetchModels(target.sparkId)
+      .then((board) => registryEngine(board.models, port) || fallback)
+      .catch(() => fallback)
+      .then((engine) => {
+        const run = createCampaign({
+          sparkId: target.sparkId,
+          port,
+          modelId: target.modelId,
+          engine,
+          host: remote.host,
+          tls: remote.tls,
+          config,
+        });
+        upsertCampaign(run);
+        kickCampaign(run.id);
+      });
   };
 
   const runA = runs.find((run) => run.id === pickA) ?? null;
@@ -98,10 +152,9 @@ function CampaignBody({ target }: { target: BenchTargetProps }) {
       config={
         <div className="campaign-config">
           <div className="bench-conc-grid" role="group" aria-label={t("campaign.presets")}>
-            <PresetButton id="headline" current={config.preset} label={t("campaign.headline")} onClick={() => applyPreset("headline")} />
-            <PresetButton id="detailed" current={config.preset} label={t("campaign.detailed")} onClick={() => applyPreset("detailed")} />
+            <button type="button" className={`bench-conc-btn${config.preset === "full" ? " is-on" : ""}`} aria-pressed={config.preset === "full"} onClick={() => setConfig(fullSweepConfig())}>{t("campaign.fullSweep")}</button>
           </div>
-          {config.preset === "custom" ? <p className="bench-sheet__hint">{t("campaign.custom")}</p> : null}
+          <p className="bench-sheet__hint">{config.preset === "custom" ? t("campaign.custom") : t("campaign.fullSweepHelp")}</p>
 
           <h3 className="bench-sheet__section-title">{t("campaign.stage.decode")}</h3>
           <label className="qrun__check">
@@ -155,12 +208,30 @@ function CampaignBody({ target }: { target: BenchTargetProps }) {
           <h3 className="bench-sheet__section-title">{t("campaign.stage.quality")}</h3>
           <label className="bp-field">
             <span className="eyebrow">{t("campaign.qualityProfile")}</span>
-            <select className="bench-input" value={config.quality.profile} onChange={(e) => edit({ ...config, quality: { profile: e.target.value as QualityCampaignProfile } })}>
+            <select className="bench-input" value={config.quality.profile === "default" ? "default" : "full"} onChange={(e) => {
+              if (e.target.value === "default") edit({ ...config, quality: { profile: "default" } });
+              else edit({ ...config, quality: { profile: "full", longSizes: config.quality.longSizes?.length ? config.quality.longSizes : [131072], longItems: config.quality.longItems ?? 3 } });
+            }}>
+              <option value="full">{t("campaign.qualityFull")}</option>
               <option value="default">{t("campaign.qualityDefault")}</option>
-              <option value="default-16k">{t("campaign.qualityLong")}</option>
             </select>
           </label>
-          <p className="bench-sheet__hint">{config.quality.profile === "default" ? t("campaign.qualityDefaultHelp") : t("campaign.qualityLongHelp")}</p>
+          <p className="bench-sheet__hint">{config.quality.profile === "default" ? t("campaign.qualityDefaultHelp") : t("campaign.qualityFullHelp")}</p>
+          {config.quality.profile !== "default" ? (
+            <>
+              <p className="eyebrow">{t("campaign.longRecall")}</p>
+              <div className="bench-conc-grid" role="group" aria-label={t("campaign.longRecall")}>
+                {CAMPAIGN_LONG_SIZES.map((n) => {
+                  const on = (config.quality.longSizes ?? []).length === 1 && config.quality.longSizes?.[0] === n;
+                  return (
+                    <button key={n} type="button" className={`bench-conc-btn${on ? " is-on" : ""}`} aria-pressed={on}
+                      onClick={() => edit({ ...config, quality: { ...config.quality, profile: "full", longSizes: [n], longItems: config.quality.longItems ?? 3 } })}>{formatContextSize(n)}</button>
+                  );
+                })}
+              </div>
+              <p className="bench-sheet__hint">{t("campaign.longRecallHelp")}</p>
+            </>
+          ) : null}
 
           <h3 className="bench-sheet__section-title">{t("campaign.stage.tool-eval")}</h3>
           <label className="bp-field">
@@ -183,6 +254,11 @@ function CampaignBody({ target }: { target: BenchTargetProps }) {
         </>
       }
     >
+      {waitingForTool ? (
+        <PageCard title={t("campaign.waitingTool")}>
+          <p>{t("campaign.waitingToolBody")}</p>
+        </PageCard>
+      ) : null}
       {active ? (
         <PageCard title={t("campaign.runningStage", { stage: stageLabel(t, active.stage) })}>
           <StageList run={active} />
@@ -195,10 +271,12 @@ function CampaignBody({ target }: { target: BenchTargetProps }) {
           <ul className="campaign-history">
             {mine.map((run) => (
               <li key={run.id}>
-                <b>{new Date(run.startedAt).toLocaleString()}</b>
-                {" · "}{run.modelId || t("campaign.unknownModel")}
-                {" · "}{statusLabel(t, run.status)}
-                {run.stage ? ` · ${stageLabel(t, run.stage)}` : ""}
+                <button type="button" className={`bench-conc-btn${focused?.id === run.id ? " is-on" : ""}`} aria-pressed={focused?.id === run.id} onClick={() => setFocusId(run.id)}>
+                  <b>{new Date(run.startedAt).toLocaleString()}</b>
+                  {" · "}{campaignTitle(run) || t("campaign.unknownModel")}
+                  {" · "}{statusLabel(t, run.status)}
+                  {run.stage ? ` · ${stageLabel(t, run.stage)}` : ""}
+                </button>
                 <div>{headlineLine(run)}</div>
                 {run.error ? <div>{explainError(t, run.error)}</div> : null}
               </li>
@@ -206,6 +284,16 @@ function CampaignBody({ target }: { target: BenchTargetProps }) {
           </ul>
         )}
       </PageCard>
+
+      {focused ? (
+        <PageCard title={t("campaign.results")}>
+          <div className="bench-conc-grid" role="group" aria-label={t("campaign.view")}>
+            <button type="button" className={`bench-conc-btn${view === "headline" ? " is-on" : ""}`} aria-pressed={view === "headline"} onClick={() => setView("headline")}>{t("campaign.headline")}</button>
+            <button type="button" className={`bench-conc-btn${view === "detailed" ? " is-on" : ""}`} aria-pressed={view === "detailed"} onClick={() => setView("detailed")}>{t("campaign.detailed")}</button>
+          </div>
+          <CampaignReport run={focused} view={view} />
+        </PageCard>
+      ) : null}
 
       <PageCard title={t("campaign.compare")}>
         <div className="campaign-picks">
@@ -218,9 +306,7 @@ function CampaignBody({ target }: { target: BenchTargetProps }) {
             <ul>{diffs.map((field) => <li key={field}>{diffLabel(t, field)}</li>)}</ul>
           </div>
         ) : null}
-        {runA && runB && paired ? <CompareTable a={runA} b={runB} /> : null}
-        {runA ? <HeadlineCard title={t("campaign.sideA")} run={runA} /> : null}
-        {runB ? <HeadlineCard title={t("campaign.sideB")} run={runB} /> : null}
+        {runA && runB ? <CampaignCompare a={runA} b={runB} view={view} /> : null}
       </PageCard>
     </PageLayout>
   );
@@ -273,12 +359,6 @@ function configValid(config: CampaignConfig): boolean {
     && Number.isInteger(tokens) && tokens >= 64 && tokens <= 2048;
 }
 
-function PresetButton({ id, current, label, onClick }: { id: CampaignPreset; current: CampaignPreset; label: string; onClick: () => void }) {
-  return (
-    <button type="button" className={`bench-conc-btn${current === id ? " is-on" : ""}`} aria-pressed={current === id} onClick={onClick}>{label}</button>
-  );
-}
-
 function stageLabel(t: (key: string, options?: Record<string, unknown>) => string, stage: CampaignStage | null): string {
   if (stage === "decode") return t("campaign.stage.decode");
   if (stage === "prefill") return t("campaign.stage.prefill");
@@ -325,7 +405,7 @@ function RunSelect({ label, value, runs, onChange }: { label: string; value: str
         <option value="">—</option>
         {runs.map((run) => (
           <option key={run.id} value={run.id}>
-            {new Date(run.startedAt).toLocaleString()} · {run.modelId || run.sparkId}
+            {new Date(run.startedAt).toLocaleString()} · {campaignTitle(run) || run.sparkId}
           </option>
         ))}
       </select>
@@ -348,49 +428,3 @@ function diffLabel(t: (key: string) => string, field: CampaignDiffField): string
   }
 }
 
-function CompareTable({ a, b }: { a: CampaignRun; b: CampaignRun }) {
-  const { t } = useTranslation("benchmarks");
-  const rows = [
-    [t("campaign.decodeAtOne"), a.headlines.decodeAgg, b.headlines.decodeAgg],
-    [t("campaign.prefillAt"), a.headlines.prefillTps, b.headlines.prefillTps],
-    [t("campaign.qualityOverall"), a.headlines.qualityPct, b.headlines.qualityPct],
-    [t("campaign.toolScore"), a.headlines.toolScore, b.headlines.toolScore],
-  ] as const;
-  return (
-    <table>
-      <thead>
-        <tr><th>{t("campaign.headlineCard")}</th><th>{t("campaign.sideA")}</th><th>{t("campaign.sideB")}</th><th>{t("campaign.delta")}</th></tr>
-      </thead>
-      <tbody>
-        {rows.map(([label, left, right]) => (
-          <tr key={label}><td>{label}</td><td>{num(left)}</td><td>{num(right)}</td><td>{delta(left, right)}</td></tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function HeadlineCard({ title, run }: { title: string; run: CampaignRun }) {
-  const { t } = useTranslation("benchmarks");
-  const levels = run.headlines.decodeLevels;
-  return (
-    <div>
-      <h3 className="bench-sheet__section-title">{title}</h3>
-      <p>{headlineLine(run)}</p>
-      {levels.length ? (
-        <ul>
-          {levels.map((row) => (
-            <li key={`${row.type}-${row.concurrency}`}>{promptLabel(t, row.type)} ×{row.concurrency} · {row.aggregate.toFixed(1)} {t("campaign.toks")}</li>
-          ))}
-        </ul>
-      ) : null}
-      {run.headlines.prefillRows.length ? (
-        <ul>
-          {run.headlines.prefillRows.map((row) => (
-            <li key={row.tokens}>{formatContextSize(row.tokens)} · {row.tps.toFixed(1)} {t("campaign.toks")}</li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}

@@ -78,15 +78,24 @@ export function campaignClient(): CampaignClient {
       return { status: job.status, error: job.error, job };
     },
     async startQuality(run) {
-      const profile = run.config.quality.profile;
+      const quality = run.config.quality;
+      const categories = quality.profile === "recorded" && quality.categories?.length
+        ? quality.categories
+        : qualityCategories(quality.profile);
+      const wantsLong = quality.profile !== "default" && categories.includes("long");
       const job = await startQualityBench(run.sparkId, {
         port: run.port,
         modelId: run.modelId,
-        categories: qualityCategories(profile),
+        categories,
         concurrency: CAMPAIGN_QUALITY_CONCURRENCY,
         label: "campaign",
-        ...(profile === "default-16k"
-          ? { longSizes: [CAMPAIGN_LONG_RECALL_TOKENS], longItems: QUALITY_DEFAULT_LONG_ITEMS }
+        ...(wantsLong
+          ? {
+              longSizes: quality.longSizes?.length
+                ? quality.longSizes
+                : [quality.profile === "default-16k" ? CAMPAIGN_LONG_RECALL_TOKENS : 131072],
+              longItems: quality.longItems ?? QUALITY_DEFAULT_LONG_ITEMS,
+            }
           : {}),
         ...endpoint(run),
       });

@@ -1,18 +1,24 @@
 import type { DecodeBenchPromptType, QualityCategory } from "../../../api/types";
 import { DECODE_BENCH_TYPES } from "../../../shared/llmPrompts.js";
-import { QUALITY_DEFAULT_CATEGORIES, QUALITY_DEFAULT_LONG_ITEMS } from "../../../shared/qualityBench.js";
+import { backendLabel } from "../../../shared/llmBackends.js";
+import { QUALITY_CATEGORIES, QUALITY_DEFAULT_CATEGORIES, QUALITY_DEFAULT_LONG_ITEMS } from "../../../shared/qualityBench.js";
 
 /** Decode start-context choices. 0 starts empty. */
 export const CAMPAIGN_DECODE_CONTEXTS = [0, 16384, 32768, 65536, 131072, 262144] as const;
-/** Prefill sizes the campaign form offers. */
-export const CAMPAIGN_PREFILL_SIZES = [4096, 8192, 16384, 32768] as const;
-export const CAMPAIGN_CONCURRENCIES = [1, 2, 4, 8] as const;
+/** Prefill sizes the campaign form offers. 1k–128k is the full sweep. */
+export const CAMPAIGN_PREFILL_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] as const;
+/** Every concurrency the decode bench accepts, through the 1–32 sweep. */
+export const CAMPAIGN_CONCURRENCIES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 32] as const;
+/** Long-recall sizes. The saved full run recorded 16k; 128k matches the top of the prefill sweep. */
+export const CAMPAIGN_LONG_SIZES = [32768, 65536, 131072, 262144] as const;
 export const CAMPAIGN_PROMPT_TYPES = DECODE_BENCH_TYPES;
 export const CAMPAIGN_LONG_RECALL_TOKENS = 16384;
 export const CAMPAIGN_QUALITY_CONCURRENCY = 4;
 
-export type CampaignPreset = "headline" | "detailed" | "custom";
-export type QualityCampaignProfile = "default" | "default-16k";
+/** "full" is the sweep preset. Headline and Detailed are result views, not run presets. */
+export type CampaignPreset = "full" | "custom";
+export type QualityCampaignProfile = "default" | "full" | "default-16k" | "recorded";
+export type CampaignView = "headline" | "detailed";
 export type ToolEvalTemplate = "short" | "regular" | "regular-hard" | "hard";
 export type CampaignStage = "decode" | "prefill" | "quality" | "tool-eval";
 
@@ -29,7 +35,13 @@ export interface CampaignConfig {
     maxTokens: number;
   };
   prefill: { contextSizes: number[] };
-  quality: { profile: QualityCampaignProfile };
+  quality: {
+    profile: QualityCampaignProfile;
+    /** Set for a recorded run whose categories are not one of the two campaign profiles. */
+    categories?: QualityCategory[];
+    longSizes?: number[];
+    longItems?: number;
+  };
   toolEval: { template: ToolEvalTemplate };
 }
 
@@ -67,6 +79,8 @@ export interface CampaignRun {
   sparkId: string;
   port: number;
   modelId: string | null;
+  /** Engine name and version that served this run. Null on older saved campaigns. */
+  engine: string | null;
   /** Remote host when the run is not on the Spark's own port. */
   host: string | null;
   tls: boolean;
@@ -105,42 +119,22 @@ function sortedUnique(values: readonly number[]): number[] {
   return [...new Set(values.filter((n) => Number.isInteger(n) && n >= 0))].sort((a, b) => a - b);
 }
 
-export function headlineConfig(): CampaignConfig {
+/** The sweep this host actually runs: thinking on, concurrency 1–32, prefill 1k–128k, full quality suite. */
+export function fullSweepConfig(): CampaignConfig {
   return {
-    preset: "headline",
+    preset: "full",
     decode: {
-      thinking: false,
-      temperature: 0,
-      concurrencies: [1, 2],
-      contextTokens: 16384,
-      promptTypes: [...CAMPAIGN_PROMPT_TYPES],
-      maxTokens: 256,
-    },
-    prefill: { contextSizes: [16384] },
-    quality: { profile: "default" },
-    toolEval: { template: "regular" },
-  };
-}
-
-export function detailedConfig(): CampaignConfig {
-  return {
-    preset: "detailed",
-    decode: {
-      thinking: false,
-      temperature: 0,
-      concurrencies: [1, 2, 4],
+      thinking: true,
+      temperature: 0.7,
+      concurrencies: [...CAMPAIGN_CONCURRENCIES],
       contextTokens: 16384,
       promptTypes: [...CAMPAIGN_PROMPT_TYPES],
       maxTokens: 400,
     },
-    prefill: { contextSizes: [4096, 16384, 32768] },
-    quality: { profile: "default-16k" },
-    toolEval: { template: "regular" },
+    prefill: { contextSizes: [...CAMPAIGN_PREFILL_SIZES] },
+    quality: { profile: "full", longSizes: [131072], longItems: QUALITY_DEFAULT_LONG_ITEMS },
+    toolEval: { template: "regular-hard" },
   };
-}
-
-export function configForPreset(preset: Exclude<CampaignPreset, "custom">): CampaignConfig {
-  return preset === "headline" ? headlineConfig() : detailedConfig();
 }
 
 /** Mark a hand-edited config as custom. The knobs themselves are what a later compare uses. */
@@ -148,7 +142,18 @@ export function asCustom(config: CampaignConfig): CampaignConfig {
   return { ...config, preset: "custom" };
 }
 
+function qualityStamp(quality: CampaignConfig["quality"]): string {
+  if (quality.profile === "default") return "default";
+  return JSON.stringify({
+    profile: quality.profile,
+    categories: quality.categories ?? null,
+    longSizes: sortedUnique(quality.longSizes ?? (quality.profile === "default-16k" ? [CAMPAIGN_LONG_RECALL_TOKENS] : [])),
+    longItems: quality.longItems ?? null,
+  });
+}
+
 export function qualityCategories(profile: QualityCampaignProfile): QualityCategory[] {
+  if (profile === "full") return [...QUALITY_CATEGORIES] as QualityCategory[];
   const base = [...QUALITY_DEFAULT_CATEGORIES] as QualityCategory[];
   return profile === "default-16k" ? [...base, "long"] : base;
 }
@@ -172,7 +177,7 @@ export function campaignSignature(config: CampaignConfig): string {
       maxTokens: config.decode.maxTokens,
     },
     prefill: { contextSizes: sortedUnique(config.prefill.contextSizes) },
-    quality: config.quality.profile,
+    quality: qualityStamp(config.quality),
     toolEval: config.toolEval.template,
   });
 }
@@ -197,7 +202,7 @@ export function campaignDiffs(a: CampaignConfig, b: CampaignConfig): CampaignDif
   if (orderedTypes(a.decode.promptTypes).join() !== orderedTypes(b.decode.promptTypes).join()) out.push("decode.promptTypes");
   if (a.decode.maxTokens !== b.decode.maxTokens) out.push("decode.maxTokens");
   if (sortedUnique(a.prefill.contextSizes).join() !== sortedUnique(b.prefill.contextSizes).join()) out.push("prefill.context");
-  if (a.quality.profile !== b.quality.profile) out.push("quality.profile");
+  if (qualityStamp(a.quality) !== qualityStamp(b.quality)) out.push("quality.profile");
   if (a.toolEval.template !== b.toolEval.template) out.push("toolEval.template");
   return out;
 }
@@ -206,15 +211,96 @@ export function campaignsComparable(a: CampaignConfig, b: CampaignConfig): boole
   return campaignDiffs(a, b).length === 0;
 }
 
+/** Wall-clock section time. Hours when the run is long; seconds only under a minute. */
+export function formatSectionDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  const total = Math.round(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/** One row per decode job. A campaign the page adopted is the same run as the one that started those jobs. */
+export function dedupeCampaigns(runs: CampaignRun[]): CampaignRun[] {
+  const byKey = new Map<string, CampaignRun>();
+  const order: string[] = [];
+  for (const run of runs) {
+    const key = run.jobs.decode ? `job:${run.jobs.decode}` : `id:${run.id}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, run);
+      order.push(key);
+      continue;
+    }
+    if (prev.id.startsWith("camp-adopted-") && !run.id.startsWith("camp-adopted-")) byKey.set(key, run);
+  }
+  return order.map((key) => byKey.get(key)!);
+}
+
 export function newCampaignId(now = Date.now(), rand = Math.random): string {
   const suffix = Math.floor(rand() * 36 ** 4).toString(36).padStart(4, "0");
   return `camp-${now.toString(36)}-${suffix}`;
+}
+
+/** Name and version together. A version already inside the name is not repeated. */
+export function engineLabel(backend: string | null | undefined, version?: string | null): string | null {
+  const name = backendLabel(backend);
+  const ver = version?.trim() || "";
+  if (!name) return ver || null;
+  if (!ver || name.includes(ver)) return name;
+  return `${name} ${ver}`;
+}
+
+/**
+ * The engine measured on the quality job wins over a label copied from whatever
+ * is serving the port today. A stored version is kept when the measurement names
+ * the same engine and did not record a version.
+ */
+export function campaignEngine(
+  stored: string | null | undefined,
+  record: { backend?: string | null; engineVersion?: string | null; gitCommit?: string | null } | null | undefined,
+): string | null {
+  const measured = record ? engineLabel(record.backend, record.engineVersion || record.gitCommit) : null;
+  if (!measured) return stored ?? null;
+  if (!stored || stored === measured) return measured;
+  const name = backendLabel(record?.backend);
+  const measuredHasVersion = Boolean(record?.engineVersion?.trim() || record?.gitCommit?.trim());
+  if (!measuredHasVersion && name && (stored === name || stored.startsWith(`${name} `))) return stored;
+  return measured;
+}
+
+export function campaignTitle(run: Pick<CampaignRun, "modelId" | "engine">): string {
+  if (run.modelId && run.engine) return `${run.modelId} · ${run.engine}`;
+  return run.modelId || run.engine || "";
+}
+
+/** The running registry profile on this port. A stopped profile that shares the port is not serving. */
+export function registryEngine(
+  models: readonly { endpoint: string | null; runtime: string; engine: string | null }[],
+  port: number,
+): string | null {
+  const hit = models.find((model) => model.runtime === "running" && model.engine && portOf(model.endpoint) === port);
+  return hit?.engine ?? null;
+}
+
+function portOf(endpoint: string | null): number | null {
+  if (!endpoint) return null;
+  try {
+    const port = Number(new URL(endpoint).port);
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createCampaign(input: {
   sparkId: string;
   port: number;
   modelId: string | null;
+  engine?: string | null;
   host?: string | null;
   tls?: boolean;
   config: CampaignConfig;
@@ -225,6 +311,7 @@ export function createCampaign(input: {
     sparkId: input.sparkId,
     port: input.port,
     modelId: input.modelId,
+    engine: input.engine ?? null,
     host: input.host ?? null,
     tls: input.tls === true,
     startedAt: input.now ?? Date.now(),
